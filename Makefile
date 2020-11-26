@@ -23,7 +23,7 @@ PWD       := $(shell pwd)
 
 default:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
-
+	kmodsign sha512 /var/lib/shim-signed/mok/MOK.priv /var/lib/shim-signed/mok/MOK.der nullmodem.ko
 endif
 
 
