@@ -14,7 +14,7 @@ EXTRA_CFLAGS += $(DEBFLAGS) -I.. -Wno-declaration-after-statement
 ifneq ($(KERNELRELEASE),)
 # call from kernel build system
 
-obj-m	:= nullmodem.o 
+obj-m	:= nullmodem-ng.o 
 
 else
 
@@ -23,7 +23,7 @@ PWD       := $(shell pwd)
 
 default:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
-	kmodsign sha512 /var/lib/shim-signed/mok/MOK.priv /var/lib/shim-signed/mok/MOK.der nullmodem.ko
+	kmodsign sha512 /var/lib/shim-signed/mok/MOK.priv /var/lib/shim-signed/mok/MOK.der nullmodem-ng.ko
 endif
 
 
