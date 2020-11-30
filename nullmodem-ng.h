@@ -25,21 +25,25 @@
 //#define WAKEUP_CHARS		256
 //#define FACTOR 10
 
+//#define RELEVANT_IFLAG(iflag) ((iflag) & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK))
+
 struct nullmodem_device
 {
-	struct tty_struct		*tty;			/* pointer to the tty for this device */
-	struct nullmodem_device		*otherside;
-//	struct async_icount		icount;
+	spinlock_t			slock;			/* Locks this structure */
+	struct tty_struct		*tty;			/* Pointer to the tty for this device */
+	struct nullmodem_device		*otherside;		/* Pointer to device paired with this one */
+	unsigned int			control_lines;		/* Control lines */
+	struct async_icount		icount;			/* Device statistics */
 //	struct serial_struct		serial;
 //	unsigned char			xchar;
 //	unsigned char			char_length;
 //	unsigned			nominal_bit_count;
 //	unsigned			actual_bit_count;
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-//	struct kfifo			fifo;
-//#else
-//	struct kfifo			*fifo;
-//#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+	struct kfifo			tx_fifo;
+#else
+	struct kfifo			*tx_fifo;
+#endif
 };
 
 //struct nullmodem_pair
