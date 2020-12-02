@@ -4,7 +4,7 @@
 #define DRIVER_DESC "NullModem Driver"
 
 #define LOG_PREFIX "nullmodem: "
-//#define DEBUG = 0
+#define DEBUG = 1
 
 #ifdef DEBUG
 #       define printd(...) pr_alert(LOG_PREFIX __VA_ARGS__)
@@ -15,7 +15,7 @@
 #define printi(...) pr_info(LOG_PREFIX __VA_ARGS__)
 #define printn(...) pr_notice(LOG_PREFIX __VA_ARGS__)
 
-#define NULLMODEM_MAJOR		240	/* experimental range */
+#define NULLMODEM_MAJOR		0	/* Auto assign major number */
 #define NULLMODEM_PAIRS		1
 
 #define MAX_DEVICES		10
@@ -29,21 +29,23 @@
 
 struct nullmodem_device
 {
-	spinlock_t			slock;			/* Locks this structure */
-	struct tty_struct		*tty;			/* Pointer to the tty for this device */
-	struct nullmodem_device		*otherside;		/* Pointer to device paired with this one */
+	struct device			*dev;
+	struct tty_port			tport;
+	struct nullmodem_device		*paired_with;		/* Pointer to device paired with this one */
 	unsigned int			control_lines;		/* Control lines */
 	struct async_icount		icount;			/* Device statistics */
-//	struct serial_struct		serial;
-//	unsigned char			xchar;
-//	unsigned char			char_length;
-//	unsigned			nominal_bit_count;
-//	unsigned			actual_bit_count;
+	struct serial_struct		serial;			/* Serial port config */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 	struct kfifo			tx_fifo;
 #else
 	struct kfifo			*tx_fifo;
 #endif
+//	unsigned char			xchar;
+//	unsigned char			char_length;
+//	unsigned			nominal_bit_count;
+//	unsigned			actual_bit_count;
+	spinlock_t			slock;			/* Locks this structure */
+	bool				registered;
 };
 
 //struct nullmodem_pair

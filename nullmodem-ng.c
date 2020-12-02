@@ -63,14 +63,17 @@ MODULE_PARM_DESC(tx_buffer_size, "Size of the Tx buffer.\n");
 // ########################################################################
 // # Static variables
 // ########################################################################
-static struct nullmodem_device	*nullmodem_devices;
-static unsigned int num_devices;
 static struct tty_driver *nullmodem_tty_driver;
+static struct nullmodem_device	*nullmodem_devices[MAX_DEVICES];
+static unsigned int num_devices;
 
 //static unsigned char drain[TX_BUF_SIZE];
 //static unsigned long last_timer_jiffies;
 //static unsigned long delta_jiffies;
 
+// ########################################################################
+// # 
+// ########################################################################
 //static int switch_pin_view(int pins)
 //{
 //	int out = 0;
@@ -131,6 +134,30 @@ static struct tty_driver *nullmodem_tty_driver;
 //
 //	if (change)
 //		wake_up_interruptible(&end->pair->control_lines_wait);
+//}
+
+//static void nullmodem_timer_proc(unsigned long data)
+//{
+//	int i;
+//	unsigned long flags;
+//	//dprint("%s jiffies: %lu\n", __FUNCTION__, jiffies);
+//
+//	unsigned long current_jiffies = jiffies;
+//	delta_jiffies = current_jiffies - last_timer_jiffies;
+//	last_timer_jiffies = current_jiffies;
+//
+//	for (i=0; i<NULLMODEM_PAIRS; ++i)
+//	{
+//		struct nullmodem_pair *pair = &pair_table[i];
+//
+//		spin_lock_irqsave(&pair->spin, flags);
+//		handle_end(&pair->a);
+//		handle_end(&pair->b);
+//		spin_unlock_irqrestore(&pair->spin, flags);
+//	}
+//
+//	nullmodem_timer.expires += TIMER_INTERVAL;
+//	add_timer(&nullmodem_timer);
 //}
 
 //static inline void handle_end(struct nullmodem_end *end)
@@ -208,30 +235,6 @@ static struct tty_driver *nullmodem_tty_driver;
 //		tty_wakeup(end->tty);
 //}
 
-//static void nullmodem_timer_proc(unsigned long data)
-//{
-//	int i;
-//	unsigned long flags;
-//	//dprint("%s jiffies: %lu\n", __FUNCTION__, jiffies);
-//
-//	unsigned long current_jiffies = jiffies;
-//	delta_jiffies = current_jiffies - last_timer_jiffies;
-//	last_timer_jiffies = current_jiffies;
-//
-//	for (i=0; i<NULLMODEM_PAIRS; ++i)
-//	{
-//		struct nullmodem_pair *pair = &pair_table[i];
-//
-//		spin_lock_irqsave(&pair->spin, flags);
-//		handle_end(&pair->a);
-//		handle_end(&pair->b);
-//		spin_unlock_irqrestore(&pair->spin, flags);
-//	}
-//
-//	nullmodem_timer.expires += TIMER_INTERVAL;
-//	add_timer(&nullmodem_timer);
-//}
-
 //static void handle_termios(struct tty_struct *tty)
 //{
 //	struct nullmodem_end *end = tty->driver_data;
@@ -260,63 +263,65 @@ static struct tty_driver *nullmodem_tty_driver;
 //					&& !(get_pins(end) & TIOCM_CTS);
 //}
 
-//static int nullmodem_open(struct tty_struct *tty, struct file *file)
-//{
-//	struct nullmodem_pair *pair = &pair_table[tty->index/2];
-//	struct nullmodem_end *end = ((tty->index&1) ? &pair->b : &pair->a);
+// ########################################################################
+// # Module TTY routines
+// ########################################################################
+static int nullmodem_open(struct tty_struct *tty, struct file *file)
+{
+	struct nullmodem_device *nm_device = nullmodem_devices[tty->index];
+	struct tty_port *nm_port = &nm_device->tport;
 //	unsigned long flags;
-//	int err = -ENOMEM;
+	int status;
+
+	printd("#%d: %s:- TTY count: %d\n", tty->index, __FUNCTION__, tty->count);
+
+	/* initialize the pointer in case something fails */
+	tty->driver_data = NULL;
+
+	status = tty_port_open(nm_port, tty, file);
+
+	if(!status) {
+		/* save our structure within the tty structure */
+		tty->driver_data = nm_device;
+	}
+
+	return status;
+
+//	if (tty->count > 1) return 0;
 //
-//	dprintf("%s - #%d c:%d\n", __FUNCTION__, tty->index, tty->count);
-//
-//	if (tty->count > 1)
-//		return 0;
-//
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-//	if (kfifo_alloc(&end->fifo, TX_BUF_SIZE, GFP_KERNEL))
-//		goto exit;
-//#else
-//	end->fifo = kfifo_alloc(TX_BUF_SIZE, GFP_KERNEL, NULL);
-//	if (!end->fifo)
-//		goto exit;
-//#endif
-//	tty->driver_data = end;
-//	end->tty = tty;
+//	spin_lock_irqsave(&nm_device->slock, flags);
+//	tty->driver_data = nm_device;
 //	end->nominal_bit_count = 0;
 //	end->actual_bit_count = 0;
 //	handle_termios(tty);
-//	err = 0;
-//exit:
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
-//	return err;
-//}
+//	spin_unlock_irqrestore(&nm_device->slock, flags);
+//
+//	return 0;
+}
 
-//static void nullmodem_close(struct tty_struct *tty, struct file *file)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
+static void nullmodem_close(struct tty_struct *tty, struct file *file)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
+	struct tty_port *nm_port;
 //	unsigned long flags;
+
+	printd("#%d: %s:- TTY count: %d\n", tty->index, __FUNCTION__, tty->count);
+
+	if (nm_device) {
+		nm_port = &nm_device->tport;
+		tty_port_close(nm_port, tty, file);
+	}
+
+//	if (tty->count > 1) return;
 //
-//	dprintf("%s - #%d c:%d\n", __FUNCTION__, tty->index, tty->count);
-//
-//	if (tty->count > 1)
-//		return;
-//
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//	end->tty = NULL;
+//	spin_lock_irqsave(&nm_device->slock, flags);
 //	change_pins(end, 0, TIOCM_RTS|TIOCM_DTR);
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-//	kfifo_free(&end->fifo);
-//#else
-//	kfifo_free(end->fifo);
-//	end->fifo = NULL;
-//#endif
 //	tty->hw_stopped = 1;
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
+//	spin_unlock_irqrestore(&nm_device->slock, flags);
 //
 //	wake_up_interruptible(&tty->read_wait);
 //	wake_up_interruptible(&tty->write_wait);
-//}
+}
 
 //static int nullmodem_write(struct tty_struct *tty, const unsigned char *buffer, int count)
 //{
@@ -358,154 +363,34 @@ static struct tty_driver *nullmodem_tty_driver;
 //	return room;
 //}
 
-//#define RELEVANT_IFLAG(iflag) ((iflag) & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK))
-
-//static void nullmodem_set_termios(struct tty_struct *tty, struct ktermios *old_termios)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//	unsigned int cflag;
-//
-//	dprintf("%s - #%d\n", __FUNCTION__, tty->index);
-//
-//	cflag = tty->termios->c_cflag;
-//
-//	/* check that they really want us to change something */
-//	if (old_termios)
-//	{
-//		if (cflag == old_termios->c_cflag
-//		&& RELEVANT_IFLAG(tty->termios->c_iflag) == RELEVANT_IFLAG(old_termios->c_iflag))
-//		{
-//			dprintf(" - nothing to change...\n");
-//			return;
-//		}
-//	}
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//	handle_termios(tty);
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
-//
-//#ifdef SCULL_DEBUG
-//	speed_t speed = tty_get_baud_rate(tty);
-//	dprintf(" - baud = %u", speed);
-//	dprintf(" - ispeed = %u", tty->termios->c_ispeed);
-//	dprintf(" - ospeed = %u", tty->termios->c_ospeed);
-//
-//	/* get the byte size */
-//	switch (cflag & CSIZE)
-//	{
-//	case CS5:	dprintf(" - data bits = 5\n");	break;
-//	case CS6:	dprintf(" - data bits = 6\n");	break;
-//	case CS7:	dprintf(" - data bits = 7\n");	break;
-//	default:
-//	case CS8:	dprintf(" - data bits = 8\n");	break;
-//	}
-//
-//	/* determine the parity */
-//	if (cflag & PARENB)
-//		if (cflag & PARODD)
-//			dprintf(" - parity = odd\n");
-//		else
-//			dprintf(" - parity = even\n");
-//	else
-//		dprintf(" - parity = none\n");
-//
-//	/* figure out the stop bits requested */
-//	if (cflag & CSTOPB)
-//		dprintf(" - stop bits = 2\n");
-//	else
-//		dprintf(" - stop bits = 1\n");
-//
-//	/* figure out the hardware flow control settings */
-//	if (cflag & CRTSCTS)
-//		dprintf(" - RTS/CTS is enabled\n");
-//	else
-//		dprintf(" - RTS/CTS is disabled\n");
-//
-//	/* determine software flow control */
-//	/* if we are implementing XON/XOFF, set the start and
-//	 * stop character in the device */
-//	/* if we are implementing INBOUND XON/XOFF */
-//	if (I_IXOFF(tty))
-//		dprintf(" - INBOUND XON/XOFF is enabled, "
-//			"XON = %2x, XOFF = %2x\n", START_CHAR(tty), STOP_CHAR(tty));
-//	else
-//		dprintf(" - INBOUND XON/XOFF is disabled\n");
-//
-//	/* if we are implementing OUTBOUND XON/XOFF */
-//	if (I_IXON(tty))
-//		dprintf(" - OUTBOUND XON/XOFF is enabled, "
-//			"XON = %2x, XOFF = %2x\n", START_CHAR(tty), STOP_CHAR(tty));
-//	else
-//		dprintf(" - OUTBOUND XON/XOFF is disabled\n");
-//#endif
-//}
-
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-//static int nullmodem_tiocmget(struct tty_struct *tty)
-//#else
-//static int nullmodem_tiocmget(struct tty_struct *tty, struct file *filp)
-//#endif
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//	int retval = -EINVAL;
-//
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//	retval = get_pins(end);
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
-//
-//	//dprintf("%s - #%d --> 0x%x\n", __FUNCTION__, tty->index, retval);
-//	return retval;
-//}
-
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-//static int nullmodem_tiocmset(struct tty_struct *tty, unsigned int set, unsigned int clear)
-//#else
-//static int nullmodem_tiocmset(struct tty_struct *tty, struct file *filp, unsigned int set, unsigned int clear)
-//#endif
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//
-//	dprintf("%s - #%d set:0x%x clear:0x%x\n", __FUNCTION__,
-//			tty->index, set, clear);
-//
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//	change_pins(end, set, clear);
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
-//	return 0;
-//}
-
-
 //static int nullmodem_ioctl_tiocgserial(struct tty_struct *tty, unsigned long arg)
 //{
-//	struct nullmodem_end *end = tty->driver_data;
+//	struct nullmodem_device *nm_device = &nullmodem_devices[tty->index];
 //	unsigned long flags;
 //	struct serial_struct tmp;
 //	struct serial_struct *serial;
 //
-//	dprintf("%s - #%d\n", __FUNCTION__, tty->index);
+//	printd("#%d: %s\n", tty->index, __FUNCTION__);
 //
-//	if (!arg)
-//		return -EFAULT;
+//	if (!arg) return -EFAULT;
 //
-//	serial = &end->serial;
+//	serial = &nm_device->serial;
 //	memset(&tmp, 0, sizeof(tmp));
 //
-//	spin_lock_irqsave(&end->pair->spin, flags);
+//	spin_lock_irqsave(&nm_device->slock, flags);
 //	tmp.type			= serial->type;
 //	tmp.line			= serial->line;
 //	tmp.port			= serial->port;
 //	tmp.irq				= serial->irq;
 //	tmp.flags			= ASYNC_SKIP_TEST | ASYNC_AUTO_IRQ;
-//	tmp.xmit_fifo_size	= serial->xmit_fifo_size;
-//	tmp.baud_base		= serial->baud_base;
-//	tmp.close_delay		= 5*HZ;
-//	tmp.closing_wait	= 30*HZ;
-//	tmp.custom_divisor	= serial->custom_divisor;
+//	tmp.xmit_fifo_size		= serial->xmit_fifo_size;
+//	tmp.baud_base			= serial->baud_base;
+//	tmp.close_delay			= 5*HZ;
+//	tmp.closing_wait		= 30*HZ;
+//	tmp.custom_divisor		= serial->custom_divisor;
 //	tmp.hub6			= serial->hub6;
 //	tmp.io_type			= serial->io_type;
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
+//	spin_unlock_irqrestore(&nm_device->slock, flags);
 //
 //	if (copy_to_user((void __user *)arg, &tmp, sizeof(struct serial_struct)))
 //		return -EFAULT;
@@ -600,38 +485,111 @@ static struct tty_driver *nullmodem_tty_driver;
 //	return 0;
 //}
 
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-//static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
-//#else
-//static int nullmodem_ioctl(struct tty_struct *tty, struct file *filp, unsigned int cmd, unsigned long arg)
-//#endif
-//{
-//	if (cmd == TCGETS || cmd == TCSETS)
-//		return -ENOIOCTLCMD;
-//
-//	dprintf("%s - #%d cmd:0x%x\n", __FUNCTION__, tty->index, cmd);
-//
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
+#else
+static int nullmodem_ioctl(struct tty_struct *tty, struct file *filp, unsigned int cmd, unsigned long arg)
+#endif
+{
+	printd("#%d: %s:- cmd:0x%x\n", tty->index, __FUNCTION__, cmd);
+
+	if (cmd == TCGETS || cmd == TCSETS)
+		return -ENOIOCTLCMD;
+
 //	switch (cmd)
 //	{
 //	case TIOCGSERIAL:
 //		return nullmodem_ioctl_tiocgserial(tty, arg);
+//		break;
 //	case TIOCMIWAIT:
 //		return nullmodem_ioctl_tiocmiwait(tty, arg);
+//		break;
 //	case TIOCGICOUNT:
 //		return nullmodem_ioctl_tiocgicount(tty, arg);
+//		break;
 //	}
-//
-//	return -ENOIOCTLCMD;
-//}
 
-//static void nullmodem_send_xchar(struct tty_struct *tty, char ch)
+	return -ENOIOCTLCMD;
+}
+
+//static void nullmodem_set_termios(struct tty_struct *tty, struct ktermios *old_termios)
 //{
 //	struct nullmodem_end *end = tty->driver_data;
 //	unsigned long flags;
+//	unsigned int cflag;
 //
 //	dprintf("%s - #%d\n", __FUNCTION__, tty->index);
 //
-//	end->xchar = ch;
+//	cflag = tty->termios->c_cflag;
+//
+//	/* check that they really want us to change something */
+//	if (old_termios)
+//	{
+//		if (cflag == old_termios->c_cflag
+//		&& RELEVANT_IFLAG(tty->termios->c_iflag) == RELEVANT_IFLAG(old_termios->c_iflag))
+//		{
+//			dprintf(" - nothing to change...\n");
+//			return;
+//		}
+//	}
+//	spin_lock_irqsave(&end->pair->spin, flags);
+//	handle_termios(tty);
+//	spin_unlock_irqrestore(&end->pair->spin, flags);
+//
+//#ifdef SCULL_DEBUG
+//	speed_t speed = tty_get_baud_rate(tty);
+//	dprintf(" - baud = %u", speed);
+//	dprintf(" - ispeed = %u", tty->termios->c_ispeed);
+//	dprintf(" - ospeed = %u", tty->termios->c_ospeed);
+//
+//	/* get the byte size */
+//	switch (cflag & CSIZE)
+//	{
+//	case CS5:	dprintf(" - data bits = 5\n");	break;
+//	case CS6:	dprintf(" - data bits = 6\n");	break;
+//	case CS7:	dprintf(" - data bits = 7\n");	break;
+//	default:
+//	case CS8:	dprintf(" - data bits = 8\n");	break;
+//	}
+//
+//	/* determine the parity */
+//	if (cflag & PARENB)
+//		if (cflag & PARODD)
+//			dprintf(" - parity = odd\n");
+//		else
+//			dprintf(" - parity = even\n");
+//	else
+//		dprintf(" - parity = none\n");
+//
+//	/* figure out the stop bits requested */
+//	if (cflag & CSTOPB)
+//		dprintf(" - stop bits = 2\n");
+//	else
+//		dprintf(" - stop bits = 1\n");
+//
+//	/* figure out the hardware flow control settings */
+//	if (cflag & CRTSCTS)
+//		dprintf(" - RTS/CTS is enabled\n");
+//	else
+//		dprintf(" - RTS/CTS is disabled\n");
+//
+//	/* determine software flow control */
+//	/* if we are implementing XON/XOFF, set the start and
+//	 * stop character in the device */
+//	/* if we are implementing INBOUND XON/XOFF */
+//	if (I_IXOFF(tty))
+//		dprintf(" - INBOUND XON/XOFF is enabled, "
+//			"XON = %2x, XOFF = %2x\n", START_CHAR(tty), STOP_CHAR(tty));
+//	else
+//		dprintf(" - INBOUND XON/XOFF is disabled\n");
+//
+//	/* if we are implementing OUTBOUND XON/XOFF */
+//	if (I_IXON(tty))
+//		dprintf(" - OUTBOUND XON/XOFF is enabled, "
+//			"XON = %2x, XOFF = %2x\n", START_CHAR(tty), STOP_CHAR(tty));
+//	else
+//		dprintf(" - OUTBOUND XON/XOFF is disabled\n");
+//#endif
 //}
 
 //static void nullmodem_throttle(struct tty_struct * tty)
@@ -669,45 +627,217 @@ static struct tty_driver *nullmodem_tty_driver;
 //		nullmodem_send_xchar(tty, START_CHAR(tty));
 //}
 
-static struct tty_operations serial_ops =
+//static void nullmodem_send_xchar(struct tty_struct *tty, char ch)
+//{
+//	struct nullmodem_end *end = tty->driver_data;
+//	unsigned long flags;
+//
+//	dprintf("%s - #%d\n", __FUNCTION__, tty->index);
+//
+//	end->xchar = ch;
+//}
+
+//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+//static int nullmodem_tiocmget(struct tty_struct *tty)
+//#else
+//static int nullmodem_tiocmget(struct tty_struct *tty, struct file *filp)
+//#endif
+//{
+//	struct nullmodem_end *end = tty->driver_data;
+//	unsigned long flags;
+//	int retval = -EINVAL;
+//
+//	spin_lock_irqsave(&end->pair->spin, flags);
+//	retval = get_pins(end);
+//	spin_unlock_irqrestore(&end->pair->spin, flags);
+//
+//	//dprintf("%s - #%d --> 0x%x\n", __FUNCTION__, tty->index, retval);
+//	return retval;
+//}
+
+//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+//static int nullmodem_tiocmset(struct tty_struct *tty, unsigned int set, unsigned int clear)
+//#else
+//static int nullmodem_tiocmset(struct tty_struct *tty, struct file *filp, unsigned int set, unsigned int clear)
+//#endif
+//{
+//	struct nullmodem_end *end = tty->driver_data;
+//	unsigned long flags;
+//
+//	dprintf("%s - #%d set:0x%x clear:0x%x\n", __FUNCTION__,
+//			tty->index, set, clear);
+//
+//	spin_lock_irqsave(&end->pair->spin, flags);
+//	change_pins(end, set, clear);
+//	spin_unlock_irqrestore(&end->pair->spin, flags);
+//	return 0;
+//}
+
+// ########################################################################
+// # Supported TTY operations
+// ########################################################################
+static struct tty_operations nm_serial_ops =
 {
-//	.open = nullmodem_open,
-//	.close = nullmodem_close,
-//	.throttle = nullmodem_throttle,
-//	.unthrottle = nullmodem_unthrottle,
-//	.write = nullmodem_write,
+	.open		= nullmodem_open,
+	.close		= nullmodem_close,
+//	.write		= nullmodem_write,
+//	//.put_char = ,
 //	.write_room = nullmodem_write_room,
-//	.set_termios = nullmodem_set_termios,
-//	//.send_xchar = nullmodem_send_xchar,
-//	.tiocmget = nullmodem_tiocmget,
-//	.tiocmset = nullmodem_tiocmset,
-//	.ioctl = nullmodem_ioctl,
+	.ioctl		= nullmodem_ioctl,
+//	.set_termios	= nullmodem_set_termios,
+//	.throttle	= nullmodem_throttle,
+//	.unthrottle	= nullmodem_unthrottle,
+//	//.send_xchar	= nullmodem_send_xchar,
+//	.tiocmget	= nullmodem_tiocmget,
+//	.tiocmset	= nullmodem_tiocmset,
 };
 
+// ########################################################################
+// # Module TTY port routines
+// ########################################################################
+static int nullmodem_port_activate(struct tty_port *tport, struct tty_struct *tty)
+{
+	struct nullmodem_device *nm_device;
+	int err = -ENOMEM;
+
+	printd("#%d: %s:- TTY count: %d\n", tty->index, __FUNCTION__, tport->count);
+
+	nm_device = container_of(tport, struct nullmodem_device, tport);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+	if (kfifo_alloc(&nm_device->tx_fifo, tx_buffer_size, GFP_KERNEL))
+		goto exit;
+#else
+	nm_device->tx_fifo = kfifo_alloc(tx_buffer_size, GFP_KERNEL, NULL);
+	if (!nm_device->tx_fifo)
+		goto exit;
+#endif
+	err = 0;
+exit:
+	return err;
+}
+
+static void nullmodem_port_shutdown(struct tty_port *tport){
+	struct nullmodem_device *nm_device;
+
+	printd("%s\n", __FUNCTION__);
+
+	nm_device = container_of(tport, struct nullmodem_device, tport);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+	kfifo_free(&nm_device->tx_fifo);
+#else
+	kfifo_free(nm_device->tx_fifo);
+	nm_device->tx_fifo = NULL;
+#endif
+}
+
+// ########################################################################
+// # TTY port operations
+// ########################################################################
+static const struct tty_port_operations nm_port_ops = {
+	.activate	= nullmodem_port_activate,
+	.shutdown	= nullmodem_port_shutdown,
+};
+
+// ########################################################################
+// # Module routines
+// ########################################################################
 static int __init nullmodem_init(void)
 {
+	struct nullmodem_device *nm_device, *nm_other = NULL;
 	int retval = 0;
 	int i;
 
-	// Allocate devices
-	if (device_pairs > MAX_DEVICES)
+	printd("%s\n", __FUNCTION__);
+
+	// Check device number
+	if ((device_pairs * 2) > MAX_DEVICES)
 	{
-		printe("Can not create more than %u devices.\n", MAX_DEVICES);
+		printe("Can not create more than %u devices (%u pairs).\n", MAX_DEVICES, (MAX_DEVICES / 2));
 		return -EINVAL;
 	}
 	num_devices = 2 * device_pairs;
 	if (num_devices == 0) num_devices = 1;					// Test mode loopback
 
-	// Allocate device array
-	nullmodem_devices = kmalloc_array(num_devices, sizeof(struct nullmodem_device), GFP_KERNEL);
-	if (!nullmodem_devices)
+	// Clear device array pointers
+	for (i = 0; i < MAX_DEVICES; i++) {
+		nullmodem_devices[i] = NULL;
+	}
+
+	// Allocate the tty driver
+	nullmodem_tty_driver = alloc_tty_driver(num_devices);
+	if (!nullmodem_tty_driver)
 	{
-		printe("Can not allocate memory for device array.\n");
+		printe("Failed to initialise TTY driver.\n");
 		return -ENOMEM;
 	}
 
+	/* initialize the tty driver */
+	nullmodem_tty_driver->owner = THIS_MODULE;
+	nullmodem_tty_driver->driver_name = "nullmodem-ng";
+	nullmodem_tty_driver->name = "nm-ng";
+	/* no more devfs subsystem */
+	nullmodem_tty_driver->major = NULLMODEM_MAJOR;
+	nullmodem_tty_driver->type = TTY_DRIVER_TYPE_SERIAL;
+	nullmodem_tty_driver->subtype = SERIAL_TYPE_NORMAL;
+	nullmodem_tty_driver->flags = TTY_DRIVER_RESET_TERMIOS | TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV;
+	/* no more devfs subsystem */
+	nullmodem_tty_driver->init_termios = tty_std_termios;
+	nullmodem_tty_driver->init_termios.c_iflag = 0;
+	nullmodem_tty_driver->init_termios.c_oflag = 0;
+	nullmodem_tty_driver->init_termios.c_cflag = B38400 | CS8 | CREAD;
+	nullmodem_tty_driver->init_termios.c_lflag = 0;
+	nullmodem_tty_driver->init_termios.c_ispeed = 38400;
+	nullmodem_tty_driver->init_termios.c_ospeed = 38400;
+	tty_set_operations(nullmodem_tty_driver, &nm_serial_ops);
+
+	/* register the tty driver */
+	retval = tty_register_driver(nullmodem_tty_driver);
+	if (retval)
+	{
+		printe("Failed to register TTY driver: %d\n", retval);
+		goto nullmodem_init_free_driver;
+	}
+
+	// Allocate devices
 	for (i = 0; i < num_devices; i++) {
-		struct nullmodem_device nm_device = nullmodem_devices[i];
+		// Allocate device
+		nm_device = kzalloc(sizeof(struct nullmodem_device), GFP_KERNEL);
+		if (!nm_device) {
+			printe("Can not allocate memory for device.\n");
+			goto nullmodem_init_free_devices;
+		}
+
+		// Pair device
+		if (nm_other != NULL) {
+			nm_device->paired_with = nm_other;			// This device is paired with the other one
+			nm_other->paired_with = nm_device;
+			nm_other = NULL;
+		} else if (num_devices == 0) {
+			nm_device->paired_with = nm_device;			// In test mode, this is the other device
+		} else {
+			nm_other = nm_device;					// Save pointer to create a pair of linked devices
+		}
+
+		tty_port_init(&nm_device->tport);				// Initialise TTY port
+		nm_device->tport.ops = &nm_port_ops;				// Set TTY port operations
+
+		nullmodem_devices[i] = nm_device;				// Save pointer to device
+	}
+
+	// Register devices
+	for (i = 0; i < num_devices; i++) {
+		nm_device = nullmodem_devices[i];
+
+		nm_device->dev = tty_port_register_device(&nm_device->tport, nullmodem_tty_driver, i, NULL);
+		if (IS_ERR(nm_device->dev)) {
+			retval = PTR_ERR(nm_device->dev);
+			printe("Could not register tty [%i]\n", retval);
+			goto nullmodem_init_unreg_devices;
+		}
+
+		nm_device->registered = true;
 		printd("Initialised nullmodem device %u.\n", i);
 	}
 
@@ -730,44 +860,6 @@ static int __init nullmodem_init(void)
 //		dprintf("%s - initialized pair %d -> %p\n", __FUNCTION__, i, pair);
 //	}
 
-	/* allocate the tty driver */
-	nullmodem_tty_driver = alloc_tty_driver(NULLMODEM_PAIRS*2);
-	if (!nullmodem_tty_driver)
-	{
-		printe("Failed to initialise TTY driver.\n");
-		retval = -ENOMEM;
-		goto nullmodem_init_free_array;
-	}
-
-	/* initialize the tty driver */
-	nullmodem_tty_driver->owner = THIS_MODULE;
-	nullmodem_tty_driver->driver_name = "nullmodem";
-	nullmodem_tty_driver->name = "nm-ng";
-	/* no more devfs subsystem */
-	nullmodem_tty_driver->major = NULLMODEM_MAJOR;
-	nullmodem_tty_driver->type = TTY_DRIVER_TYPE_SERIAL;
-	nullmodem_tty_driver->subtype = SERIAL_TYPE_NORMAL;
-	nullmodem_tty_driver->flags = TTY_DRIVER_RESET_TERMIOS | TTY_DRIVER_REAL_RAW ;
-	/* no more devfs subsystem */
-	nullmodem_tty_driver->init_termios = tty_std_termios;
-	nullmodem_tty_driver->init_termios.c_iflag = 0;
-	nullmodem_tty_driver->init_termios.c_oflag = 0;
-	nullmodem_tty_driver->init_termios.c_cflag = B38400 | CS8 | CREAD;
-	nullmodem_tty_driver->init_termios.c_lflag = 0;
-	nullmodem_tty_driver->init_termios.c_ispeed = 38400;
-	nullmodem_tty_driver->init_termios.c_ospeed = 38400;
-
-	tty_set_operations(nullmodem_tty_driver, &serial_ops);
-
-	/* register the tty driver */
-	retval = tty_register_driver(nullmodem_tty_driver);
-	if (retval)
-	{
-		printe("Failed to register TTY driver\n");
-		goto nullmodem_init_free_tty;
-		return retval;
-	}
-
 //	last_timer_jiffies = jiffies;
 //	nullmodem_timer.expires = last_timer_jiffies + TIMER_INTERVAL;
 //	add_timer(&nullmodem_timer);
@@ -775,35 +867,60 @@ static int __init nullmodem_init(void)
 	printi(DRIVER_DESC " " DRIVER_VERSION "\n");
 	return 0;
 
-nullmodem_init_free_tty:
+nullmodem_init_unreg_devices:
+	// Unregister devices
+	for (i = 0; i < num_devices; ++i) {
+		nm_device = nullmodem_devices[i];
+		if ((nm_device != NULL) && (nm_device->registered)) {
+			if (nm_device->tport.count) nullmodem_port_shutdown(&nm_device->tport);
+			tty_unregister_device(nullmodem_tty_driver, i);
+		}
+	}
+nullmodem_init_free_devices:
+	// Free devices
+	for (i = 0; i < num_devices; ++i) {
+		nm_device = nullmodem_devices[i];
+		if (nm_device != NULL) {
+			tty_port_destroy(&nm_device->tport);
+			kfree(nm_device);
+		}
+	}
+	tty_unregister_driver(nullmodem_tty_driver);
+nullmodem_init_free_driver:
 	put_tty_driver(nullmodem_tty_driver);
-nullmodem_init_free_array:
-	kfree(nullmodem_devices);
 	return retval;
 }
 
 static void __exit nullmodem_exit(void)
 {
+	struct nullmodem_device *nm_device;
 	int i;
+
+	printd("%s\n", __FUNCTION__);
 
 //	del_timer_sync(&nullmodem_timer);
 
-	// Unregister individual devices
+	// Unregister devices
 	for (i = 0; i < num_devices; ++i) {
-		tty_unregister_device(nullmodem_tty_driver, i);
+		nm_device = nullmodem_devices[i];
+		if ((nm_device != NULL) && (nm_device->registered)) {
+			if (nm_device->tport.count) nullmodem_port_shutdown(&nm_device->tport);
+			tty_unregister_device(nullmodem_tty_driver, i);
+		}
 	}
-	// Unregister driver
+	// Free devices
+	for (i = 0; i < num_devices; ++i) {
+		nm_device = nullmodem_devices[i];
+		if (nm_device != NULL) {
+			tty_port_destroy(&nm_device->tport);
+			kfree(nm_device);
+			printd("Destroyed nullmodem device %u.\n", i);
+		}
+	}
 	tty_unregister_driver(nullmodem_tty_driver);
+	put_tty_driver(nullmodem_tty_driver);
 
-//	/* shut down all of the timers and free the memory */
-//	for (i = 0; i < NULLMODEM_PAIRS; ++i)
-//	{
-//		pair_table[i].a.tty = NULL;
-//		pair_table[i].b.tty = NULL;
-//	}
-
-	// Finally free device array
-	kfree(nullmodem_devices);
+	printd("Unloaded\n");
 }
 
 module_init(nullmodem_init);
