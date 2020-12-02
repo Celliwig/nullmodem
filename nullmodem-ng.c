@@ -184,11 +184,7 @@ static unsigned int num_devices;
 //	if (chars == 0)
 //		return;
 //
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 //	int cnt = kfifo_out(&end->fifo, drain, chars);
-//#else
-//	int cnt = __kfifo_get(end->fifo, drain, chars);
-//#endif
 //	if (cnt < chars)
 //	{
 //		end->nominal_bit_count = 0;
@@ -335,11 +331,7 @@ static void nullmodem_close(struct tty_struct *tty, struct file *file)
 //		return 0;
 //	}
 //
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 //	written = kfifo_in(&end->fifo, buffer, count);
-//#else
-//	written = __kfifo_put(end->fifo, buffer, count);
-//#endif
 //	//dprintf("%s - #%d %d bytes --> %d written\n", __FUNCTION__, tty->index, count, written);
 //	return written;
 //}
@@ -354,11 +346,7 @@ static void nullmodem_close(struct tty_struct *tty, struct file *file)
 //		dprintf("%s - #%d --> %d (tty stopped)\n", __FUNCTION__, tty->index, room);
 //		return 0;
 //	}
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 //	room = kfifo_avail(&end->fifo);
-//#else
-//	room = TX_BUF_SIZE - __kfifo_len(end->fifo);
-//#endif
 //	//dprintf("%s - #%d --> %d\n", __FUNCTION__, tty->index, room);
 //	return room;
 //}
@@ -485,11 +473,7 @@ static void nullmodem_close(struct tty_struct *tty, struct file *file)
 //	return 0;
 //}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
-#else
-static int nullmodem_ioctl(struct tty_struct *tty, struct file *filp, unsigned int cmd, unsigned long arg)
-#endif
 {
 	printd("#%d: %s:- cmd:0x%x\n", tty->index, __FUNCTION__, cmd);
 
@@ -637,11 +621,7 @@ static int nullmodem_ioctl(struct tty_struct *tty, struct file *filp, unsigned i
 //	end->xchar = ch;
 //}
 
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 //static int nullmodem_tiocmget(struct tty_struct *tty)
-//#else
-//static int nullmodem_tiocmget(struct tty_struct *tty, struct file *filp)
-//#endif
 //{
 //	struct nullmodem_end *end = tty->driver_data;
 //	unsigned long flags;
@@ -655,11 +635,7 @@ static int nullmodem_ioctl(struct tty_struct *tty, struct file *filp, unsigned i
 //	return retval;
 //}
 
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 //static int nullmodem_tiocmset(struct tty_struct *tty, unsigned int set, unsigned int clear)
-//#else
-//static int nullmodem_tiocmset(struct tty_struct *tty, struct file *filp, unsigned int set, unsigned int clear)
-//#endif
 //{
 //	struct nullmodem_end *end = tty->driver_data;
 //	unsigned long flags;
@@ -704,14 +680,7 @@ static int nullmodem_port_activate(struct tty_port *tport, struct tty_struct *tt
 
 	nm_device = container_of(tport, struct nullmodem_device, tport);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-	if (kfifo_alloc(&nm_device->tx_fifo, tx_buffer_size, GFP_KERNEL))
-		goto exit;
-#else
-	nm_device->tx_fifo = kfifo_alloc(tx_buffer_size, GFP_KERNEL, NULL);
-	if (!nm_device->tx_fifo)
-		goto exit;
-#endif
+	if (kfifo_alloc(&nm_device->tx_fifo, tx_buffer_size, GFP_KERNEL)) goto exit;
 	err = 0;
 exit:
 	return err;
@@ -724,12 +693,7 @@ static void nullmodem_port_shutdown(struct tty_port *tport){
 
 	nm_device = container_of(tport, struct nullmodem_device, tport);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 	kfifo_free(&nm_device->tx_fifo);
-#else
-	kfifo_free(nm_device->tx_fifo);
-	nm_device->tx_fifo = NULL;
-#endif
 }
 
 // ########################################################################
