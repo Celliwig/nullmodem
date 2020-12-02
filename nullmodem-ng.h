@@ -32,27 +32,16 @@ struct nullmodem_device
 	struct device			*dev;
 	struct tty_port			tport;
 	struct nullmodem_device		*paired_with;		/* Pointer to device paired with this one */
-	unsigned int			control_lines;		/* Control lines */
 	struct async_icount		icount;			/* Device statistics */
 	struct serial_struct		serial;			/* Serial port config */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 	struct kfifo			tx_fifo;
-#else
-	struct kfifo			*tx_fifo;
-#endif
+	struct mutex			tx_mutex;
+	struct timer_list		*tx_timer;
+	wait_queue_head_t		wait;
+	unsigned int			control_lines;		/* Control lines */
 //	unsigned char			xchar;
 //	unsigned char			char_length;
 //	unsigned			nominal_bit_count;
 //	unsigned			actual_bit_count;
-	spinlock_t			slock;			/* Locks this structure */
 	bool				registered;
 };
-
-//struct nullmodem_pair
-//{
-//	spinlock_t				spin;		/* locks this structure */
-//	struct nullmodem_end	a;
-//	struct nullmodem_end	b;
-//	int						control_lines;	/* control lines as seen from end a */
-//	wait_queue_head_t		control_lines_wait;
-//};

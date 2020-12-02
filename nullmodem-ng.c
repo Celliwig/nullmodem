@@ -680,7 +680,19 @@ static int nullmodem_port_activate(struct tty_port *tport, struct tty_struct *tt
 
 	nm_device = container_of(tport, struct nullmodem_device, tport);
 
+	// Create Tx FIFO
 	if (kfifo_alloc(&nm_device->tx_fifo, tx_buffer_size, GFP_KERNEL)) goto exit;
+
+	// Create timer
+	if (nm_device->tx_timer == NULL) {
+		nm_device->tx_timer = kmalloc(sizeof(struct timer_list), GFP_KERNEL);
+		if (!nm_device->tx_timer) goto exit;
+	}
+//	timer_setup(nm_device->tx_timer, nullmodem_timer_proc, 0);
+//	nm_device->tx_timer->data = (unsigned long) nm_device;
+//	nm_device->tx_timer->expires = jiffies + DELAY_TIME;
+//	add_timer(nm_device->tx_timer);
+
 	err = 0;
 exit:
 	return err;
@@ -693,7 +705,11 @@ static void nullmodem_port_shutdown(struct tty_port *tport){
 
 	nm_device = container_of(tport, struct nullmodem_device, tport);
 
+	// Destroy Tx FIFO
 	kfifo_free(&nm_device->tx_fifo);
+
+	// Shutdown timer
+	del_timer(nm_device->tx_timer);
 }
 
 // ########################################################################
@@ -784,6 +800,9 @@ static int __init nullmodem_init(void)
 			nm_other = nm_device;					// Save pointer to create a pair of linked devices
 		}
 
+		mutex_init(&nm_device->tx_mutex);				// Initialise Tx mutex
+		nm_device->tx_timer = NULL;
+
 		tty_port_init(&nm_device->tport);				// Initialise TTY port
 		nm_device->tport.ops = &nm_port_ops;				// Set TTY port operations
 
@@ -804,29 +823,6 @@ static int __init nullmodem_init(void)
 		nm_device->registered = true;
 		printd("Initialised nullmodem device %u.\n", i);
 	}
-
-
-//	init_timer(&nullmodem_timer);
-//	setup_timer(&nullmodem_timer, nullmodem_timer_proc, 0);
-
-//	for (i = 0; i < NULLMODEM_PAIRS; ++i)
-//	{
-//		struct nullmodem_pair *pair = &pair_table[i];
-//		memset(pair, 0, sizeof(*pair));
-//		pair->a.other = &pair->b;
-//		pair->a.pair = pair;
-//		pair->b.other = &pair->a;
-//		pair->b.pair = pair;
-//		pair->a.char_length = 10 * FACTOR;
-//		pair->b.char_length = 10 * FACTOR;
-//		spin_lock_init(&pair->spin);
-//		init_waitqueue_head(&pair->control_lines_wait);
-//		dprintf("%s - initialized pair %d -> %p\n", __FUNCTION__, i, pair);
-//	}
-
-//	last_timer_jiffies = jiffies;
-//	nullmodem_timer.expires = last_timer_jiffies + TIMER_INTERVAL;
-//	add_timer(&nullmodem_timer);
 
 	printi(DRIVER_DESC " " DRIVER_VERSION "\n");
 	return 0;
@@ -862,8 +858,6 @@ static void __exit nullmodem_exit(void)
 
 	printd("%s\n", __FUNCTION__);
 
-//	del_timer_sync(&nullmodem_timer);
-
 	// Unregister devices
 	for (i = 0; i < num_devices; ++i) {
 		nm_device = nullmodem_devices[i];
@@ -876,6 +870,11 @@ static void __exit nullmodem_exit(void)
 	for (i = 0; i < num_devices; ++i) {
 		nm_device = nullmodem_devices[i];
 		if (nm_device != NULL) {
+			if (nm_device->tx_timer) {
+				del_timer_sync(nm_device->tx_timer);
+				kfree(nm_device->tx_timer);
+			}
+
 			tty_port_destroy(&nm_device->tport);
 			kfree(nm_device);
 			printd("Destroyed nullmodem device %u.\n", i);
