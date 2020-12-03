@@ -136,30 +136,6 @@ static unsigned int num_devices;
 //		wake_up_interruptible(&end->pair->control_lines_wait);
 //}
 
-//static void nullmodem_timer_proc(unsigned long data)
-//{
-//	int i;
-//	unsigned long flags;
-//	//dprint("%s jiffies: %lu\n", __FUNCTION__, jiffies);
-//
-//	unsigned long current_jiffies = jiffies;
-//	delta_jiffies = current_jiffies - last_timer_jiffies;
-//	last_timer_jiffies = current_jiffies;
-//
-//	for (i=0; i<NULLMODEM_PAIRS; ++i)
-//	{
-//		struct nullmodem_pair *pair = &pair_table[i];
-//
-//		spin_lock_irqsave(&pair->spin, flags);
-//		handle_end(&pair->a);
-//		handle_end(&pair->b);
-//		spin_unlock_irqrestore(&pair->spin, flags);
-//	}
-//
-//	nullmodem_timer.expires += TIMER_INTERVAL;
-//	add_timer(&nullmodem_timer);
-//}
-
 //static inline void handle_end(struct nullmodem_end *end)
 //{
 //	if (!end->tty)
@@ -260,6 +236,60 @@ static unsigned int num_devices;
 //}
 
 // ########################################################################
+// # Timer routines
+// ########################################################################
+static void nullmodem_timer_tx_handle(struct timer_list *tl)
+{
+	struct nullmodem_device *nm_device;
+	unsigned int val;
+
+	printd("%s\n", __FUNCTION__);
+
+	nm_device = from_timer(nm_device, tl, tx_timer);
+
+	mutex_lock(&nm_device->tx_mutex);
+	kfifo_get(&nm_device->tx_fifo, &val);
+	mutex_unlock(&nm_device->tx_mutex);
+
+	printd("%s - %u\n", __FUNCTION__, val);
+}
+
+static void nullmodem_timer_tx_set(struct timer_list *tl)
+{
+	struct nullmodem_device *nm_device;
+
+	printd("%s\n", __FUNCTION__);
+
+	nm_device = from_timer(nm_device, tl, tx_timer);
+
+	if (!timer_pending(&nm_device->tx_timer)) {
+		nm_device->tx_timer.expires = jiffies + 500;
+		add_timer(&nm_device->tx_timer);
+	}
+
+//	int i;
+//	unsigned long flags;
+//	//dprint("%s jiffies: %lu\n", __FUNCTION__, jiffies);
+//
+//	unsigned long current_jiffies = jiffies;
+//	delta_jiffies = current_jiffies - last_timer_jiffies;
+//	last_timer_jiffies = current_jiffies;
+//
+//	for (i=0; i<NULLMODEM_PAIRS; ++i)
+//	{
+//		struct nullmodem_pair *pair = &pair_table[i];
+//
+//		spin_lock_irqsave(&pair->spin, flags);
+//		handle_end(&pair->a);
+//		handle_end(&pair->b);
+//		spin_unlock_irqrestore(&pair->spin, flags);
+//	}
+//
+//	nullmodem_timer.expires += TIMER_INTERVAL;
+//	add_timer(&nullmodem_timer);
+}
+
+// ########################################################################
 // # Module TTY routines
 // ########################################################################
 static int nullmodem_open(struct tty_struct *tty, struct file *file)
@@ -319,41 +349,69 @@ static void nullmodem_close(struct tty_struct *tty, struct file *file)
 //	wake_up_interruptible(&tty->write_wait);
 }
 
-//static int nullmodem_write(struct tty_struct *tty, const unsigned char *buffer, int count)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//	int written = 0;
-//
-//	if (tty->stopped)
-//	{
-//		dprintf("%s - #%d %d bytes --> 0 (tty stopped)\n", __FUNCTION__, tty->index, count);
-//		return 0;
-//	}
-//
-//	written = kfifo_in(&end->fifo, buffer, count);
-//	//dprintf("%s - #%d %d bytes --> %d written\n", __FUNCTION__, tty->index, count, written);
-//	return written;
-//}
+static int nullmodem_write(struct tty_struct *tty, const unsigned char *buffer, int count)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
+	struct tty_port *nm_port;
+	int retval;
+	unsigned long flags;
 
-//static int nullmodem_write_room(struct tty_struct *tty)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	int room = 0;
-//
-//	if (tty->stopped)
-//	{
-//		dprintf("%s - #%d --> %d (tty stopped)\n", __FUNCTION__, tty->index, room);
-//		return 0;
-//	}
-//	room = kfifo_avail(&end->fifo);
-//	//dprintf("%s - #%d --> %d\n", __FUNCTION__, tty->index, room);
-//	return room;
-//}
+	printd("#%d: %s:- TTY count: %d\n", tty->index, __FUNCTION__, tty->count);
+
+	if (!nm_device) return -ENODEV;
+
+	mutex_lock(&nm_device->tx_mutex);
+
+	nm_port = &nm_device->tport;
+	// Check that port configured
+	spin_lock_irqsave(&nm_port->lock, flags);
+	if (!nm_port->count) {
+		spin_unlock_irqrestore(&nm_port->lock, flags);
+		retval = -EINVAL;
+		goto exit;
+	}
+	spin_unlock_irqrestore(&nm_port->lock, flags);
+
+	retval = kfifo_in(&nm_device->tx_fifo, buffer, count);
+	nullmodem_timer_tx_set(&nm_device->tx_timer);
+	printd("#%d: %s:- %d bytes --> %d written\n", tty->index, __FUNCTION__, count, retval);
+exit:
+	mutex_unlock(&nm_device->tx_mutex);
+	return retval;
+}
+
+static int nullmodem_write_room(struct tty_struct *tty)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
+	struct tty_port *nm_port;
+	int room = -EINVAL;
+	unsigned long flags;
+
+	if (!nm_device) return -ENODEV;
+
+	mutex_lock(&nm_device->tx_mutex);
+
+	nm_port = &nm_device->tport;
+	spin_lock_irqsave(&nm_port->lock, flags);
+	if (!nm_port->count) {
+		spin_unlock_irqrestore(&nm_port->lock, flags);
+		goto exit;
+	}
+	spin_unlock_irqrestore(&nm_port->lock, flags);
+
+	/* calculate how much room is left in the device */
+	room = 255;
+
+	room = kfifo_avail(&nm_device->tx_fifo);
+	printd("#%d: %s:- %d\n", tty->index, __FUNCTION__, room);
+exit:
+	mutex_unlock(&nm_device->tx_mutex);
+	return room;
+}
 
 //static int nullmodem_ioctl_tiocgserial(struct tty_struct *tty, unsigned long arg)
 //{
-//	struct nullmodem_device *nm_device = &nullmodem_devices[tty->index];
+//	struct nullmodem_device *nm_device = tty->driver_data;
 //	unsigned long flags;
 //	struct serial_struct tmp;
 //	struct serial_struct *serial;
@@ -656,9 +714,9 @@ static struct tty_operations nm_serial_ops =
 {
 	.open		= nullmodem_open,
 	.close		= nullmodem_close,
-//	.write		= nullmodem_write,
-//	//.put_char = ,
-//	.write_room = nullmodem_write_room,
+	.write		= nullmodem_write,
+//	//.put_char 	= ,
+	.write_room 	= nullmodem_write_room,
 	.ioctl		= nullmodem_ioctl,
 //	.set_termios	= nullmodem_set_termios,
 //	.throttle	= nullmodem_throttle,
@@ -683,15 +741,8 @@ static int nullmodem_port_activate(struct tty_port *tport, struct tty_struct *tt
 	// Create Tx FIFO
 	if (kfifo_alloc(&nm_device->tx_fifo, tx_buffer_size, GFP_KERNEL)) goto exit;
 
-	// Create timer
-	if (nm_device->tx_timer == NULL) {
-		nm_device->tx_timer = kmalloc(sizeof(struct timer_list), GFP_KERNEL);
-		if (!nm_device->tx_timer) goto exit;
-	}
-//	timer_setup(nm_device->tx_timer, nullmodem_timer_proc, 0);
-//	nm_device->tx_timer->data = (unsigned long) nm_device;
-//	nm_device->tx_timer->expires = jiffies + DELAY_TIME;
-//	add_timer(nm_device->tx_timer);
+	// Setup timer
+	timer_setup(&nm_device->tx_timer, nullmodem_timer_tx_handle, 0);
 
 	err = 0;
 exit:
@@ -709,7 +760,7 @@ static void nullmodem_port_shutdown(struct tty_port *tport){
 	kfifo_free(&nm_device->tx_fifo);
 
 	// Shutdown timer
-	del_timer(nm_device->tx_timer);
+	del_timer(&nm_device->tx_timer);
 }
 
 // ########################################################################
@@ -801,7 +852,6 @@ static int __init nullmodem_init(void)
 		}
 
 		mutex_init(&nm_device->tx_mutex);				// Initialise Tx mutex
-		nm_device->tx_timer = NULL;
 
 		tty_port_init(&nm_device->tport);				// Initialise TTY port
 		nm_device->tport.ops = &nm_port_ops;				// Set TTY port operations
@@ -870,11 +920,7 @@ static void __exit nullmodem_exit(void)
 	for (i = 0; i < num_devices; ++i) {
 		nm_device = nullmodem_devices[i];
 		if (nm_device != NULL) {
-			if (nm_device->tx_timer) {
-				del_timer_sync(nm_device->tx_timer);
-				kfree(nm_device->tx_timer);
-			}
-
+			del_timer_sync(&nm_device->tx_timer);
 			tty_port_destroy(&nm_device->tport);
 			kfree(nm_device);
 			printd("Destroyed nullmodem device %u.\n", i);

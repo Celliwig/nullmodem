@@ -36,7 +36,7 @@ struct nullmodem_device
 	struct serial_struct		serial;			/* Serial port config */
 	struct kfifo			tx_fifo;
 	struct mutex			tx_mutex;
-	struct timer_list		*tx_timer;
+	struct timer_list		tx_timer;
 	wait_queue_head_t		wait;
 	unsigned int			control_lines;		/* Control lines */
 //	unsigned char			xchar;
