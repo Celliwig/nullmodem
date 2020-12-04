@@ -238,20 +238,37 @@ static unsigned int num_devices;
 // ########################################################################
 // # Timer routines
 // ########################################################################
+static unsigned int nullmodem_calculate_tx_delay(void)
+{
+	return 500;
+}
+
 static void nullmodem_timer_tx_handle(struct timer_list *tl)
 {
-	struct nullmodem_device *nm_device;
-	unsigned int val;
+	struct nullmodem_device *nm_device, *nm_other;
+	unsigned char val;
 
 	printd("%s\n", __FUNCTION__);
 
 	nm_device = from_timer(nm_device, tl, tx_timer);
+	nm_other = nm_device->paired_with;
 
 	mutex_lock(&nm_device->tx_mutex);
+	// Get character from Tx FIFO
 	kfifo_get(&nm_device->tx_fifo, &val);
 	mutex_unlock(&nm_device->tx_mutex);
 
 	printd("%s - %u\n", __FUNCTION__, val);
+
+	// Write character, and push buffer to user
+	tty_insert_flip_char(&nm_device->tport, val, TTY_NORMAL);
+	tty_flip_buffer_push(&nm_device->tport);
+
+	// Schedule Tx timer if Tx FIFO not empty
+	if (!kfifo_is_empty(&nm_device->tx_fifo)) {
+		nm_device->tx_timer.expires = jiffies + nullmodem_calculate_tx_delay();
+		add_timer(&nm_device->tx_timer);
+	}
 }
 
 static void nullmodem_timer_tx_set(struct timer_list *tl)
@@ -262,8 +279,9 @@ static void nullmodem_timer_tx_set(struct timer_list *tl)
 
 	nm_device = from_timer(nm_device, tl, tx_timer);
 
+	// Schedule Tx timer, if it is not already active
 	if (!timer_pending(&nm_device->tx_timer)) {
-		nm_device->tx_timer.expires = jiffies + 500;
+		nm_device->tx_timer.expires = jiffies + nullmodem_calculate_tx_delay();
 		add_timer(&nm_device->tx_timer);
 	}
 
@@ -398,9 +416,6 @@ static int nullmodem_write_room(struct tty_struct *tty)
 		goto exit;
 	}
 	spin_unlock_irqrestore(&nm_port->lock, flags);
-
-	/* calculate how much room is left in the device */
-	room = 255;
 
 	room = kfifo_avail(&nm_device->tx_fifo);
 	printd("#%d: %s:- %d\n", tty->index, __FUNCTION__, room);
