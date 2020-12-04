@@ -4,9 +4,9 @@
 #define DRIVER_DESC "NullModem Driver"
 
 #define LOG_PREFIX "nullmodem: "
-#define DEBUG = 1
+#define NM_DEBUG = 1
 
-#ifdef DEBUG
+#ifdef NM_DEBUG
 #       define printd(...) pr_alert(LOG_PREFIX __VA_ARGS__)
 #else
 #       define printd(...) do {} while (0)
@@ -25,20 +25,22 @@
 //#define WAKEUP_CHARS		256
 //#define FACTOR 10
 
-//#define RELEVANT_IFLAG(iflag) ((iflag) & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK))
+#define RELEVANT_IFLAG(iflag) ((iflag) & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK))
 
 struct nullmodem_device
 {
 	struct device			*dev;
+	struct tty_struct		*tty;
 	struct tty_port			tport;
 	struct nullmodem_device		*paired_with;		/* Pointer to device paired with this one */
 	struct async_icount		icount;			/* Device statistics */
-	struct serial_struct		serial;			/* Serial port config */
+//	struct serial_struct		serial;			/* Serial port config */
+	struct mutex			rx_mutex;
 	struct kfifo			tx_fifo;
 	struct mutex			tx_mutex;
 	struct timer_list		tx_timer;
 	wait_queue_head_t		wait;
-	unsigned int			control_lines;		/* Control lines */
+	unsigned int			status_lines;		/* Status lines (DTR/CTS/etc) */
 //	unsigned char			xchar;
 //	unsigned char			char_length;
 //	unsigned			nominal_bit_count;

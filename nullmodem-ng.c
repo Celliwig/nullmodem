@@ -74,7 +74,7 @@ static unsigned int num_devices;
 // ########################################################################
 // # 
 // ########################################################################
-//static int switch_pin_view(int pins)
+//static int nullmodem_status_lines_swapped(int pins)
 //{
 //	int out = 0;
 //	if (pins & TIOCM_RTS) out |= TIOCM_CTS;
@@ -88,53 +88,94 @@ static unsigned int num_devices;
 //{
 //	int pins = end->pair->control_lines;
 //	if (end == &end->pair->b)
-//		pins = switch_pin_view(pins);
+//		pins = nullmodem_status_lines_swapped(pins);
 //	if (pins&TIOCM_DSR)
 //		pins |= TIOCM_CD;
 //	return pins;
 //}
 
-//static void change_pins(struct nullmodem_end *end, unsigned int set, unsigned int clear)
-//{
-//	int is_end_b = (end == &end->pair->b);
-//	int old_pins = end->pair->control_lines;
-//	if (is_end_b)
-//		old_pins = switch_pin_view(old_pins);
-//
-//	int new_pins = (old_pins & ~clear) | set;
-//	int change = old_pins ^ new_pins;
-//
-//	if (is_end_b)
-//		new_pins = switch_pin_view(new_pins);
-//
-//	end->pair->control_lines = new_pins;
-//
-//	if (change & TIOCM_RTS)
-//	{
-//		end->other->icount.cts++;
-//	}
-//	if (change & TIOCM_DTR)
-//	{
-//		end->other->icount.dsr++;
-//		end->other->icount.dcd++;
-//	}
-//
-//	if (end->other->tty
-//	&& (end->other->tty->termios->c_cflag & CRTSCTS)
-//	&& (change&TIOCM_RTS))
-//	{
-//		if (!(new_pins&TIOCM_RTS))
-//			end->other->tty->hw_stopped = 1;
-//		else
-//		{
-//			end->other->tty->hw_stopped = 0;
-//			tty_wakeup(end->other->tty);
-//		}
-//	}
-//
+static void nullmodem_status_lines_update(struct nullmodem_device *nm_device, unsigned int slines_set, unsigned int slines_clear)
+{
+	unsigned int pins_changed, pins_new, pins_old;
+
+	// Lock this device
+	mutex_lock(&nm_device->tx_mutex);
+
+	pins_old = nm_device->status_lines;					// Get current configuration
+	pins_new = (pins_old & ~slines_clear) | slines_set;			// Create new configuration
+	pins_changed = pins_old ^ pins_new;					// Is there a difference?
+
+	// Release this device
+	mutex_unlock(&nm_device->tx_mutex);
+
+	if (pins_changed)
+	{
+		// Lock paired device
+		mutex_lock(&nm_device->paired_with->rx_mutex);
+
+		// Update receiver stats
+		if (pins_changed & TIOCM_RTS)
+		{
+			nm_device->paired_with->icount.cts++;
+		}
+		if (pins_changed & TIOCM_DTR)
+		{
+			nm_device->paired_with->icount.dsr++;
+			nm_device->paired_with->icount.dcd++;
+		}
+
+		// Check if RTS has changed
+		if (nm_device->paired_with->tty &&
+				(nm_device->paired_with->tty->termios.c_cflag & CRTSCTS) &&
+				(pins_changed & TIOCM_RTS))
+		{
+			if (!(pins_new & TIOCM_RTS))
+			{
+				// RTS = 0, so stop receiver
+				nm_device->paired_with->tty->hw_stopped = 1;
+			}
+			else
+			{
+				// RTS = 1, enable receiver
+				nm_device->paired_with->tty->hw_stopped = 0;
+				tty_wakeup(nm_device->paired_with->tty);
+			}
+		}
+
+		// Release paired device
+		mutex_unlock(&nm_device->paired_with->rx_mutex);
+	}
+
 //	if (change)
 //		wake_up_interruptible(&end->pair->control_lines_wait);
-//}
+}
+
+static void nullmodem_termios_update(struct tty_struct *tty)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
+
+	speed_t speed = tty_get_baud_rate(tty);
+	if (speed == 0)
+		nullmodem_status_lines_update(nm_device, 0, TIOCM_DTR|TIOCM_RTS);
+	else
+		nullmodem_status_lines_update(nm_device, TIOCM_DTR|TIOCM_RTS, 0);
+
+//	unsigned int cflag = tty->termios->c_cflag;
+//	end->char_length = 2;
+//	switch (cflag & CSIZE)
+//	{
+//	case CS5:	end->char_length +=5;	break;
+//	case CS6:	end->char_length +=6;	break;
+//	case CS7:	end->char_length +=7;	break;
+//	default:
+//	case CS8:	end->char_length +=8;	break;
+//	}
+//	if (cflag & PARENB) end->char_length += 1;
+//	if (cflag & CSTOPB) end->char_length += 1;
+//	end->char_length *= FACTOR;
+//
+//	tty->hw_stopped = (tty->termios->c_cflag & CRTSCTS) && !(get_pins(end) & TIOCM_CTS);
+}
 
 //static inline void handle_end(struct nullmodem_end *end)
 //{
@@ -207,40 +248,12 @@ static unsigned int num_devices;
 //		tty_wakeup(end->tty);
 //}
 
-//static void handle_termios(struct tty_struct *tty)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//
-//	speed_t speed = tty_get_baud_rate(tty);
-//	if (speed == 0)
-//		change_pins(end, 0, TIOCM_DTR|TIOCM_RTS);
-//	else
-//		change_pins(end, TIOCM_DTR|TIOCM_RTS, 0);
-//
-//	unsigned int cflag = tty->termios->c_cflag;
-//	end->char_length = 2;
-//	switch (cflag & CSIZE)
-//	{
-//	case CS5:	end->char_length +=5;	break;
-//	case CS6:	end->char_length +=6;	break;
-//	case CS7:	end->char_length +=7;	break;
-//	default:
-//	case CS8:	end->char_length +=8;	break;
-//	}
-//	if (cflag & PARENB) end->char_length += 1;
-//	if (cflag & CSTOPB) end->char_length += 1;
-//	end->char_length *= FACTOR;
-//
-//	tty->hw_stopped = (tty->termios->c_cflag&CRTSCTS)
-//					&& !(get_pins(end) & TIOCM_CTS);
-//}
-
 // ########################################################################
 // # Timer routines
 // ########################################################################
 static unsigned int nullmodem_calculate_tx_delay(void)
 {
-	return 500;
+	return 200;
 }
 
 static void nullmodem_timer_tx_handle(struct timer_list *tl)
@@ -260,9 +273,11 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 
 	printd("%s - %u\n", __FUNCTION__, val);
 
+	mutex_lock(&nm_device->paired_with->rx_mutex);
 	// Write character, and push buffer to user
 	tty_insert_flip_char(&nm_other->tport, val, TTY_NORMAL);
 	tty_flip_buffer_push(&nm_other->tport);
+	mutex_unlock(&nm_device->paired_with->rx_mutex);
 
 	// Schedule Tx timer if Tx FIFO not empty
 	if (!kfifo_is_empty(&nm_device->tx_fifo)) {
@@ -329,6 +344,9 @@ static int nullmodem_open(struct tty_struct *tty, struct file *file)
 		tty->driver_data = nm_device;
 	}
 
+	// Update termios
+	nullmodem_termios_update(tty);
+
 	return status;
 
 //	if (tty->count > 1) return 0;
@@ -337,7 +355,6 @@ static int nullmodem_open(struct tty_struct *tty, struct file *file)
 //	tty->driver_data = nm_device;
 //	end->nominal_bit_count = 0;
 //	end->actual_bit_count = 0;
-//	handle_termios(tty);
 //	spin_unlock_irqrestore(&nm_device->slock, flags);
 //
 //	return 0;
@@ -359,7 +376,7 @@ static void nullmodem_close(struct tty_struct *tty, struct file *file)
 //	if (tty->count > 1) return;
 //
 //	spin_lock_irqsave(&nm_device->slock, flags);
-//	change_pins(end, 0, TIOCM_RTS|TIOCM_DTR);
+//	nullmodem_status_lines_update(end, 0, TIOCM_RTS|TIOCM_DTR);
 //	tty->hw_stopped = 1;
 //	spin_unlock_irqrestore(&nm_device->slock, flags);
 //
@@ -569,85 +586,87 @@ static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned lo
 	return -ENOIOCTLCMD;
 }
 
-//static void nullmodem_set_termios(struct tty_struct *tty, struct ktermios *old_termios)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//	unsigned int cflag;
-//
-//	dprintf("%s - #%d\n", __FUNCTION__, tty->index);
-//
-//	cflag = tty->termios->c_cflag;
-//
-//	/* check that they really want us to change something */
-//	if (old_termios)
-//	{
-//		if (cflag == old_termios->c_cflag
-//		&& RELEVANT_IFLAG(tty->termios->c_iflag) == RELEVANT_IFLAG(old_termios->c_iflag))
-//		{
-//			dprintf(" - nothing to change...\n");
-//			return;
-//		}
-//	}
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//	handle_termios(tty);
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
-//
-//#ifdef SCULL_DEBUG
-//	speed_t speed = tty_get_baud_rate(tty);
-//	dprintf(" - baud = %u", speed);
-//	dprintf(" - ispeed = %u", tty->termios->c_ispeed);
-//	dprintf(" - ospeed = %u", tty->termios->c_ospeed);
-//
-//	/* get the byte size */
-//	switch (cflag & CSIZE)
-//	{
-//	case CS5:	dprintf(" - data bits = 5\n");	break;
-//	case CS6:	dprintf(" - data bits = 6\n");	break;
-//	case CS7:	dprintf(" - data bits = 7\n");	break;
-//	default:
-//	case CS8:	dprintf(" - data bits = 8\n");	break;
-//	}
-//
-//	/* determine the parity */
-//	if (cflag & PARENB)
-//		if (cflag & PARODD)
-//			dprintf(" - parity = odd\n");
-//		else
-//			dprintf(" - parity = even\n");
-//	else
-//		dprintf(" - parity = none\n");
-//
-//	/* figure out the stop bits requested */
-//	if (cflag & CSTOPB)
-//		dprintf(" - stop bits = 2\n");
-//	else
-//		dprintf(" - stop bits = 1\n");
-//
-//	/* figure out the hardware flow control settings */
-//	if (cflag & CRTSCTS)
-//		dprintf(" - RTS/CTS is enabled\n");
-//	else
-//		dprintf(" - RTS/CTS is disabled\n");
-//
-//	/* determine software flow control */
-//	/* if we are implementing XON/XOFF, set the start and
-//	 * stop character in the device */
-//	/* if we are implementing INBOUND XON/XOFF */
-//	if (I_IXOFF(tty))
-//		dprintf(" - INBOUND XON/XOFF is enabled, "
-//			"XON = %2x, XOFF = %2x\n", START_CHAR(tty), STOP_CHAR(tty));
-//	else
-//		dprintf(" - INBOUND XON/XOFF is disabled\n");
-//
-//	/* if we are implementing OUTBOUND XON/XOFF */
-//	if (I_IXON(tty))
-//		dprintf(" - OUTBOUND XON/XOFF is enabled, "
-//			"XON = %2x, XOFF = %2x\n", START_CHAR(tty), STOP_CHAR(tty));
-//	else
-//		dprintf(" - OUTBOUND XON/XOFF is disabled\n");
-//#endif
-//}
+static void nullmodem_termios_set(struct tty_struct *tty, struct ktermios *old_termios)
+{
+	//struct nullmodem_device *nm_device = tty->driver_data;
+	unsigned int cflag;
+
+	printd("#%d: %s\n", tty->index, __FUNCTION__);
+
+	cflag = tty->termios.c_cflag;
+
+	// Check if something has changed
+	if (old_termios)
+	{
+		if ((cflag == old_termios->c_cflag) &&
+				(RELEVANT_IFLAG(tty->termios.c_iflag) == RELEVANT_IFLAG(old_termios->c_iflag)))
+		{
+			printd("#%d: %s - nothing to change...\n", tty->index, __FUNCTION__);
+			return;
+		}
+	}
+
+	// Update termios
+	nullmodem_termios_update(tty);
+
+#ifdef NM_DEBUG
+	speed_t speed = tty_get_baud_rate(tty);
+	printd("#%d: %s - baud = %u\n", tty->index, __FUNCTION__, speed);
+	printd("#%d: %s - ispeed = %u\n", tty->index, __FUNCTION__, tty->termios.c_ispeed);
+	printd("#%d: %s - ospeed = %u\n", tty->index, __FUNCTION__, tty->termios.c_ospeed);
+
+	// Byte size
+	switch (cflag & CSIZE)
+	{
+		case CS5:
+			printd("#%d: %s - data bits = 5\n", tty->index, __FUNCTION__);
+			break;
+		case CS6:
+			printd("#%d: %s - data bits = 6\n", tty->index, __FUNCTION__);
+			break;
+		case CS7:
+			printd("#%d: %s - data bits = 7\n", tty->index, __FUNCTION__);
+			break;
+		default:
+		case CS8:
+			printd("#%d: %s - data bits = 8\n", tty->index, __FUNCTION__);
+			break;
+	}
+
+	// Parity
+	if (cflag & PARENB)
+		if (cflag & PARODD)
+			printd("#%d: %s - parity = odd\n", tty->index, __FUNCTION__);
+		else
+			printd("#%d: %s - parity = even\n", tty->index, __FUNCTION__);
+	else
+		printd("#%d: %s - parity = none\n", tty->index, __FUNCTION__);
+
+	// Stop bits
+	if (cflag & CSTOPB)
+		printd("#%d: %s - stop bits = 2\n", tty->index, __FUNCTION__);
+	else
+		printd("#%d: %s - stop bits = 1\n", tty->index, __FUNCTION__);
+
+	// Hardware flow control
+	if (cflag & CRTSCTS)
+		printd("#%d: %s - RTS/CTS is enabled\n", tty->index, __FUNCTION__);
+	else
+		printd("#%d: %s - RTS/CTS is disabled\n", tty->index, __FUNCTION__);
+
+	// Software flow control
+	/* If we are implementing INBOUND XON/XOFF */
+	if (I_IXOFF(tty))
+		printd("#%d: %s - INBOUND XON/XOFF is enabled, XON = %2x, XOFF = %2x\n", tty->index, __FUNCTION__, START_CHAR(tty), STOP_CHAR(tty));
+	else
+		printd("#%d: %s - INBOUND XON/XOFF is disabled\n", tty->index, __FUNCTION__);
+	/* If we are implementing OUTBOUND XON/XOFF */
+	if (I_IXON(tty))
+		printd("#%d: %s - OUTBOUND XON/XOFF is enabled, XON = %2x, XOFF = %2x\n", tty->index, __FUNCTION__, START_CHAR(tty), STOP_CHAR(tty));
+	else
+		printd("#%d: %s - OUTBOUND XON/XOFF is disabled\n", tty->index, __FUNCTION__);
+#endif
+}
 
 //static void nullmodem_throttle(struct tty_struct * tty)
 //{
@@ -662,7 +681,7 @@ static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned lo
 //	if (tty->termios->c_cflag & CRTSCTS)
 //	{
 //		spin_lock_irqsave(&end->pair->spin, flags);
-//		change_pins(end, 0, TIOCM_RTS);
+//		nullmodem_status_lines_update(end, 0, TIOCM_RTS);
 //		spin_unlock_irqrestore(&end->pair->spin, flags);
 //	}
 //}
@@ -677,7 +696,7 @@ static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned lo
 //	if (tty->termios->c_cflag & CRTSCTS)
 //	{
 //		spin_lock_irqsave(&end->pair->spin, flags);
-//		change_pins(end, TIOCM_RTS, 0);
+//		nullmodem_status_lines_update(end, TIOCM_RTS, 0);
 //		spin_unlock_irqrestore(&end->pair->spin, flags);
 //	}
 //	if (I_IXOFF(tty))
@@ -717,7 +736,7 @@ static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned lo
 //			tty->index, set, clear);
 //
 //	spin_lock_irqsave(&end->pair->spin, flags);
-//	change_pins(end, set, clear);
+//	nullmodem_status_lines_update(end, set, clear);
 //	spin_unlock_irqrestore(&end->pair->spin, flags);
 //	return 0;
 //}
@@ -730,10 +749,10 @@ static struct tty_operations nm_serial_ops =
 	.open		= nullmodem_open,
 	.close		= nullmodem_close,
 	.write		= nullmodem_write,
-//	//.put_char 	= ,
+	//.put_char 	= ,
 	.write_room 	= nullmodem_write_room,
 	.ioctl		= nullmodem_ioctl,
-//	.set_termios	= nullmodem_set_termios,
+	.set_termios	= nullmodem_termios_set,
 //	.throttle	= nullmodem_throttle,
 //	.unthrottle	= nullmodem_unthrottle,
 //	//.send_xchar	= nullmodem_send_xchar,
@@ -752,6 +771,7 @@ static int nullmodem_port_activate(struct tty_port *tport, struct tty_struct *tt
 	printd("#%d: %s:- TTY count: %d\n", tty->index, __FUNCTION__, tport->count);
 
 	nm_device = container_of(tport, struct nullmodem_device, tport);
+	nm_device->tty = tty;
 
 	// Create Tx FIFO
 	if (kfifo_alloc(&nm_device->tx_fifo, tx_buffer_size, GFP_KERNEL)) goto exit;
@@ -867,6 +887,7 @@ static int __init nullmodem_init(void)
 			nm_other = nm_device;					// Save pointer to create a pair of linked devices
 		}
 
+		mutex_init(&nm_device->rx_mutex);				// Initialise Rx mutex
 		mutex_init(&nm_device->tx_mutex);				// Initialise Tx mutex
 
 		tty_port_init(&nm_device->tport);				// Initialise TTY port
