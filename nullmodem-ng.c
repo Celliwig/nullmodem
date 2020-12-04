@@ -261,8 +261,8 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	printd("%s - %u\n", __FUNCTION__, val);
 
 	// Write character, and push buffer to user
-	tty_insert_flip_char(&nm_device->tport, val, TTY_NORMAL);
-	tty_flip_buffer_push(&nm_device->tport);
+	tty_insert_flip_char(&nm_other->tport, val, TTY_NORMAL);
+	tty_flip_buffer_push(&nm_other->tport);
 
 	// Schedule Tx timer if Tx FIFO not empty
 	if (!kfifo_is_empty(&nm_device->tx_fifo)) {
@@ -847,6 +847,7 @@ static int __init nullmodem_init(void)
 	}
 
 	// Allocate devices
+	nm_other = NULL;
 	for (i = 0; i < num_devices; i++) {
 		// Allocate device
 		nm_device = kzalloc(sizeof(struct nullmodem_device), GFP_KERNEL);
@@ -860,7 +861,7 @@ static int __init nullmodem_init(void)
 			nm_device->paired_with = nm_other;			// This device is paired with the other one
 			nm_other->paired_with = nm_device;
 			nm_other = NULL;
-		} else if (num_devices == 0) {
+		} else if (num_devices == 1) {
 			nm_device->paired_with = nm_device;			// In test mode, this is the other device
 		} else {
 			nm_other = nm_device;					// Save pointer to create a pair of linked devices
