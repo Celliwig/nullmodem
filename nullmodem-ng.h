@@ -41,8 +41,9 @@ struct nullmodem_device
 	struct timer_list		tx_timer;
 	wait_queue_head_t		wait;
 	unsigned int			status_lines;		/* Status lines (DTR/CTS/etc) */
+	speed_t				baud_rate;		/* Port's selected baud rate */
+	unsigned char			symbol_length;		/* Length in bits of a symbol (inc. start/stop/etc) */
 //	unsigned char			xchar;
-//	unsigned char			char_length;
 //	unsigned			nominal_bit_count;
 //	unsigned			actual_bit_count;
 	bool				registered;
