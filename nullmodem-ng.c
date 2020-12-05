@@ -65,7 +65,7 @@ MODULE_PARM_DESC(tx_buffer_size, "Size of the Tx buffer.\n");
 // ########################################################################
 static struct tty_driver *nullmodem_tty_driver;
 static struct nullmodem_device	*nullmodem_devices[MAX_DEVICES];
-static unsigned int num_devices;
+static unsigned int num_devices, scrambled_char = 0xff;
 
 //static unsigned char drain[TX_BUF_SIZE];
 //static unsigned long last_timer_jiffies;
@@ -153,12 +153,47 @@ static void nullmodem_status_lines_update(struct nullmodem_device *nm_device, un
 static void nullmodem_termios_update(struct tty_struct *tty)
 {
 	struct nullmodem_device *nm_device = tty->driver_data;
+	speed_t nm1_rx, nm2_rx, nm1_tx, nm2_tx;
+	tcflag_t cflag_device, cflag_paired;
+	unsigned long flags;
 
 	speed_t speed = tty_get_baud_rate(tty);
 	if (speed == 0)
 		nullmodem_status_lines_update(nm_device, 0, TIOCM_DTR|TIOCM_RTS);
 	else
 		nullmodem_status_lines_update(nm_device, TIOCM_DTR|TIOCM_RTS, 0);
+
+	// Get this device baud/parity/bits/etc
+	spin_lock_irqsave(&nm_device->tport.lock, flags);
+	nm1_rx = nm_device->tty->termios.c_ispeed;
+	nm1_tx = nm_device->tty->termios.c_ospeed;
+	// Filter flow control
+	cflag_device = nm_device->tty->termios.c_cflag & ~CRTSCTS;
+	spin_unlock_irqrestore(&nm_device->tport.lock, flags);
+
+	// Check that the other port is allocated
+	if (nm_device->paired_with->tty)
+	{
+		// Get paired device baud/parity/bits/etc
+		spin_lock_irqsave(&nm_device->paired_with->tport.lock, flags);
+		nm2_rx = nm_device->paired_with->tty->termios.c_ispeed;
+		nm2_tx = nm_device->paired_with->tty->termios.c_ospeed;
+		// Filter flow control
+		cflag_paired = nm_device->paired_with->tty->termios.c_cflag & ~CRTSCTS;
+		spin_unlock_irqrestore(&nm_device->paired_with->tport.lock, flags);
+
+		// Check whether async parameters match on either end
+		if ((nm1_tx == nm2_rx) && (nm2_tx == nm1_rx) && (cflag_device == cflag_paired))
+		{
+			nm_device->tx_rx_matched = true;
+			nm_device->paired_with->tx_rx_matched = true;
+		}
+		else
+		{
+			nm_device->tx_rx_matched = false;
+			nm_device->paired_with->tx_rx_matched = false;
+		}
+	}
 
 //	unsigned int cflag = tty->termios->c_cflag;
 //	end->char_length = 2;
@@ -269,6 +304,10 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	mutex_lock(&nm_device->tx_mutex);
 	// Get character from Tx FIFO
 	kfifo_get(&nm_device->tx_fifo, &val);
+	// Scramble character if the ends are mismatched
+	if (!nm_device->tx_rx_matched) {
+		val = scrambled_char = (scrambled_char ^ val) >> 1;
+	}
 	mutex_unlock(&nm_device->tx_mutex);
 
 	printd("%s - %u\n", __FUNCTION__, val);

@@ -46,4 +46,5 @@ struct nullmodem_device
 //	unsigned			nominal_bit_count;
 //	unsigned			actual_bit_count;
 	bool				registered;
+	bool				tx_rx_matched;		/* Tx baud/bit/parity matches paired device */
 };
