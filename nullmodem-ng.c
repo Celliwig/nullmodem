@@ -916,11 +916,11 @@ static ssize_t nm_stats_show(struct device *dev, struct device_attribute *attr, 
 		char_count += sprintf(buf + char_count, "	Symbols per Tick: %u\n", nm_device->tx_symbols_per_tick);
 
 		char_count += sprintf(buf + char_count, "ICOUNT Stats\n");
-		char_count += sprintf(buf + char_count, "	Clear To Send: %u\n", nm_device->paired_with->icount.cts);
-		char_count += sprintf(buf + char_count, "	Data Carrier Detect: %u\n", nm_device->paired_with->icount.dcd);
-		char_count += sprintf(buf + char_count, "	Data Set Ready: %u\n", nm_device->paired_with->icount.dsr);
-		char_count += sprintf(buf + char_count, "	Rx Received: %u\n", nm_device->paired_with->icount.rx);
-		char_count += sprintf(buf + char_count, "	Tx Sent: %u\n", nm_device->paired_with->icount.tx);
+		char_count += sprintf(buf + char_count, "	Clear To Send: %u\n", nm_device->icount.cts);
+		char_count += sprintf(buf + char_count, "	Data Carrier Detect: %u\n", nm_device->icount.dcd);
+		char_count += sprintf(buf + char_count, "	Data Set Ready: %u\n", nm_device->icount.dsr);
+		char_count += sprintf(buf + char_count, "	Rx Received: %u\n", nm_device->icount.rx);
+		char_count += sprintf(buf + char_count, "	Tx Sent: %u\n", nm_device->icount.tx);
 	}
 
 	return char_count;
