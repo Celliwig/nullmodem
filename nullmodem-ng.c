@@ -105,6 +105,8 @@ static void nullmodem_status_lines_update(struct nullmodem_device *nm_device, un
 	pins_new = (pins_old & ~slines_clear) | slines_set;			// Create new configuration
 	pins_changed = pins_old ^ pins_new;					// Is there a difference?
 
+	nm_device->status_lines = pins_new;
+
 	// Release this device
 	mutex_unlock(&nm_device->tx_mutex);
 
@@ -209,7 +211,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 	if (cflag_device & CSTOPB) nm_device->symbol_length += 1;
 
 	// Calculate the ratio of system timer ticks to symbols per second
-	ticks_per_symbol = DIV_ROUND_CLOSEST(HZ, DIV_ROUND_CLOSEST(nm_device->baud_rate, nm_device->symbol_length));
+	ticks_per_symbol = DIV_ROUND_CLOSEST(TIMER_FREQ, DIV_ROUND_CLOSEST(nm_device->baud_rate, nm_device->symbol_length));
 	if (ticks_per_symbol >= 1)
 	{
 		// If the baud rate is slow enough, transmit just 1 symbol
@@ -223,7 +225,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 		// Set minimum time between timer execution
 		// Transmit multiple characters to emulate baud rate
 		nm_device->ticks_per_tx_symbol = 1;
-		nm_device->tx_symbols_per_tick = DIV_ROUND_CLOSEST(DIV_ROUND_CLOSEST(nm_device->baud_rate, nm_device->symbol_length), HZ);
+		nm_device->tx_symbols_per_tick = DIV_ROUND_CLOSEST(DIV_ROUND_CLOSEST(nm_device->baud_rate, nm_device->symbol_length), TIMER_FREQ);
 	}
 
 //	end->char_length *= FACTOR;
@@ -859,6 +861,50 @@ static const struct tty_port_operations nm_port_ops = {
 };
 
 // ########################################################################
+// # SysFS routines
+// ########################################################################
+
+static ssize_t nm_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct nullmodem_device *nm_device = dev_get_drvdata(dev);
+	int char_count = 0;
+
+	if ((nm_device == NULL) || (nm_device->tty == NULL))
+	{
+		char_count += sprintf(buf, "Device not initialised!\n");
+	}
+	else
+	{
+		char_count += sprintf(buf + char_count, "Baud Rate: %u\n", nm_device->baud_rate);
+		char_count += sprintf(buf + char_count, "	Input Speed: %u\n", nm_device->tty->termios.c_ispeed);
+		char_count += sprintf(buf + char_count, "	Output Speed: %u\n", nm_device->tty->termios.c_ospeed);
+
+		char_count += sprintf(buf + char_count, "Status Lines: 0x%04x\n", nm_device->status_lines);
+		char_count += sprintf(buf + char_count, "	Request To Send: %s\n", nm_device->status_lines & TIOCM_RTS ? "true" : "false");
+		char_count += sprintf(buf + char_count, "	Data Terminal Ready: %s\n", nm_device->status_lines & TIOCM_DTR ? "true" : "false");
+
+		char_count += sprintf(buf + char_count, "Tx FIFO\n");
+		char_count += sprintf(buf + char_count, "	FIFO Used: %u\n", kfifo_len(&nm_device->tx_fifo));
+		char_count += sprintf(buf + char_count, "	FIFO Available: %u\n", kfifo_avail(&nm_device->tx_fifo));
+
+		char_count += sprintf(buf + char_count, "Tx Symbol Parameters\n");
+		char_count += sprintf(buf + char_count, "	Symbol Length: %u\n", nm_device->symbol_length);
+		char_count += sprintf(buf + char_count, "	Ticks per Symbol: %u\n", nm_device->ticks_per_tx_symbol);
+		char_count += sprintf(buf + char_count, "	Symbols per Tick: %u\n", nm_device->tx_symbols_per_tick);
+
+		char_count += sprintf(buf + char_count, "ICOUNT Stats\n");
+		char_count += sprintf(buf + char_count, "	Clear To Send: %u\n", nm_device->paired_with->icount.cts);
+		char_count += sprintf(buf + char_count, "	Data Carrier Detect: %u\n", nm_device->paired_with->icount.dcd);
+		char_count += sprintf(buf + char_count, "	Data Set Ready: %u\n", nm_device->paired_with->icount.dsr);
+		char_count += sprintf(buf + char_count, "	Rx Received: %u\n", nm_device->paired_with->icount.rx);
+		char_count += sprintf(buf + char_count, "	Tx Sent: %u\n", nm_device->paired_with->icount.tx);
+	}
+
+	return char_count;
+}
+static DEVICE_ATTR_RO(nm_stats);
+
+// ########################################################################
 // # Module routines
 // ########################################################################
 static int __init nullmodem_init(void)
@@ -958,6 +1004,10 @@ static int __init nullmodem_init(void)
 			printe("Could not register tty [%i]\n", retval);
 			goto nullmodem_init_unreg_devices;
 		}
+		nm_device->dev->driver_data = nm_device;
+
+		// Register SysFS device stats
+		if (device_create_file(nm_device->dev, &dev_attr_nm_stats)) printe("Could not create sysfs file for card_type\n");
 
 		nm_device->registered = true;
 		printd("Initialised nullmodem device %u.\n", i);
@@ -1000,6 +1050,8 @@ static void __exit nullmodem_exit(void)
 	// Unregister devices
 	for (i = 0; i < num_devices; ++i) {
 		nm_device = nullmodem_devices[i];
+		// Unregister SysFS device stats
+		device_remove_file(nm_device->dev, &dev_attr_nm_stats);
 		if ((nm_device != NULL) && (nm_device->registered)) {
 			if (nm_device->tport.count) nullmodem_port_shutdown(&nm_device->tport);
 			tty_unregister_device(nullmodem_tty_driver, i);

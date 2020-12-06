@@ -20,6 +20,7 @@
 
 #define MAX_DEVICES		10
 #define DEFAULT_BUF_SIZE	1024
+#define TIMER_FREQ		HZ
 //#define TIMER_INTERVAL	(HZ/20)
 ////#define TIMER_INTERVAL	HZ
 //#define WAKEUP_CHARS		256
