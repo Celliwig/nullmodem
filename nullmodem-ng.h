@@ -18,8 +18,9 @@
 #define NULLMODEM_MAJOR		0	/* Auto assign major number */
 #define NULLMODEM_PAIRS		1
 
-#define MAX_DEVICES		10
 #define DEFAULT_BUF_SIZE	1024
+#define DRAIN_BUF_SIZE		256
+#define MAX_DEVICES		10
 #define TIMER_FREQ		HZ
 //#define TIMER_INTERVAL	(HZ/20)
 ////#define TIMER_INTERVAL	HZ

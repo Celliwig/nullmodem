@@ -50,6 +50,9 @@ MODULE_LICENSE("GPL");
 // ########################################################################
 // # Module Parameters
 // ########################################################################
+static unsigned int burst_transfer = 1;
+module_param(burst_transfer, int, 0444);
+MODULE_PARM_DESC(burst_transfer, "Allow multiple characters to be transfer.\n");
 static unsigned int device_pairs = NULLMODEM_PAIRS;
 module_param(device_pairs, int, 0444);
 MODULE_PARM_DESC(device_pairs, "Number of linked pairs to create.\n");
@@ -67,7 +70,6 @@ static struct tty_driver *nullmodem_tty_driver;
 static struct nullmodem_device	*nullmodem_devices[MAX_DEVICES];
 static unsigned int num_devices, scrambled_char = 0xff;
 
-//static unsigned char drain[TX_BUF_SIZE];
 //static unsigned long last_timer_jiffies;
 //static unsigned long delta_jiffies;
 
@@ -308,30 +310,49 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 // ########################################################################
 static void nullmodem_timer_tx_handle(struct timer_list *tl)
 {
-	struct nullmodem_device *nm_device, *nm_other;
-	unsigned char val;
+	struct nullmodem_device *nm_device;
+	unsigned char tx_drain[DRAIN_BUF_SIZE], tx_transfer_count;
+	unsigned int i;
 
 	printd("%s\n", __FUNCTION__);
 
 	nm_device = from_timer(nm_device, tl, tx_timer);
-	nm_other = nm_device->paired_with;
+
+	tx_transfer_count = 1;
+	// Check whether multi-byte transfers are enabled
+	if (burst_transfer)
+	{
+		tx_transfer_count = nm_device->tx_symbols_per_tick;
+	}
 
 	mutex_lock(&nm_device->tx_mutex);
-	// Get character from Tx FIFO
-	kfifo_get(&nm_device->tx_fifo, &val);
-	// Scramble character if the ends are mismatched
+	// Extract from FIFO a set number of bytes
+	// Don't remove, don't know how many can actually be transfered
+	tx_transfer_count = kfifo_out_peek(&nm_device->tx_fifo, &tx_drain, tx_transfer_count);
+
+	// Scramble characters if the ends are mismatched
 	if (!nm_device->tx_rx_matched) {
-		val = scrambled_char = (scrambled_char ^ val) >> 1;
+		for (i = 0; i < tx_transfer_count; i++)
+		{
+			tx_drain[i] = scrambled_char = (scrambled_char ^ tx_drain[i]) >> 1;
+		}
 	}
-	mutex_unlock(&nm_device->tx_mutex);
 
-	printd("%s - %u\n", __FUNCTION__, val);
-
+	// Write to receiver buffer
 	mutex_lock(&nm_device->paired_with->rx_mutex);
-	// Write character, and push buffer to user
-	tty_insert_flip_char(&nm_other->tport, val, TTY_NORMAL);
-	tty_flip_buffer_push(&nm_other->tport);
+	// Write byte(s)
+	tx_transfer_count = tty_insert_flip_string(&nm_device->paired_with->tport, tx_drain, tx_transfer_count);
+	if (tx_transfer_count > 0)
+	{
+		tty_flip_buffer_push(&nm_device->paired_with->tport);		// Push buffer to user
+		nm_device->paired_with->icount.rx += tx_transfer_count;		// Update Rx stats
+	}
 	mutex_unlock(&nm_device->paired_with->rx_mutex);
+
+	// Remove the actual data
+	kfifo_out(&nm_device->tx_fifo, &tx_drain, tx_transfer_count);
+	nm_device->icount.tx += tx_transfer_count;				// Update Tx stats
+	mutex_unlock(&nm_device->tx_mutex);
 
 	// Schedule Tx timer if Tx FIFO not empty
 	if (!kfifo_is_empty(&nm_device->tx_fifo)) {
@@ -875,6 +896,8 @@ static ssize_t nm_stats_show(struct device *dev, struct device_attribute *attr, 
 	}
 	else
 	{
+		char_count += sprintf(buf + char_count, "HW Stopped: %s\n\n", nm_device->tty->hw_stopped ? "true" : "false");
+
 		char_count += sprintf(buf + char_count, "Baud Rate: %u\n", nm_device->baud_rate);
 		char_count += sprintf(buf + char_count, "	Input Speed: %u\n", nm_device->tty->termios.c_ispeed);
 		char_count += sprintf(buf + char_count, "	Output Speed: %u\n", nm_device->tty->termios.c_ospeed);
