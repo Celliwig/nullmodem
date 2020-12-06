@@ -155,6 +155,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 	struct nullmodem_device *nm_device = tty->driver_data;
 	speed_t nm1_rx, nm2_rx, nm1_tx, nm2_tx;
 	tcflag_t cflag_device, cflag_paired;
+	unsigned int ticks_per_symbol;
 	unsigned long flags;
 
 	nm_device->baud_rate = tty_get_baud_rate(tty);
@@ -206,6 +207,24 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 	}
 	if (cflag_device & PARENB) nm_device->symbol_length += 1;
 	if (cflag_device & CSTOPB) nm_device->symbol_length += 1;
+
+	// Calculate the ratio of system timer ticks to symbols per second
+	ticks_per_symbol = DIV_ROUND_CLOSEST(HZ, DIV_ROUND_CLOSEST(nm_device->baud_rate, nm_device->symbol_length));
+	if (ticks_per_symbol >= 1)
+	{
+		// If the baud rate is slow enough, transmit just 1 symbol
+		// Set the delay between timer execution to emulate baud rate
+		nm_device->ticks_per_tx_symbol = ticks_per_symbol;
+		nm_device->tx_symbols_per_tick = 1;
+	}
+	else
+	{
+		// If the baud rate is faster than the system timer
+		// Set minimum time between timer execution
+		// Transmit multiple characters to emulate baud rate
+		nm_device->ticks_per_tx_symbol = 1;
+		nm_device->tx_symbols_per_tick = DIV_ROUND_CLOSEST(DIV_ROUND_CLOSEST(nm_device->baud_rate, nm_device->symbol_length), HZ);
+	}
 
 //	end->char_length *= FACTOR;
 //	tty->hw_stopped = (tty->termios->c_cflag & CRTSCTS) && !(get_pins(end) & TIOCM_CTS);
@@ -285,16 +304,6 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 // ########################################################################
 // # Timer routines
 // ########################################################################
-static unsigned int nullmodem_calculate_tx_delay(struct nullmodem_device *nm_device)
-{
-	unsigned int symbol_period;
-
-	symbol_period = 1000 / (nm_device->baud_rate / nm_device->symbol_length);
-	if (symbol_period == 0) symbol_period = 1;
-
-	return symbol_period;
-}
-
 static void nullmodem_timer_tx_handle(struct timer_list *tl)
 {
 	struct nullmodem_device *nm_device, *nm_other;
@@ -324,7 +333,7 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 
 	// Schedule Tx timer if Tx FIFO not empty
 	if (!kfifo_is_empty(&nm_device->tx_fifo)) {
-		nm_device->tx_timer.expires = jiffies + nullmodem_calculate_tx_delay(nm_device);
+		nm_device->tx_timer.expires = jiffies + nm_device->ticks_per_tx_symbol;
 		add_timer(&nm_device->tx_timer);
 	}
 }
@@ -339,7 +348,7 @@ static void nullmodem_timer_tx_set(struct timer_list *tl)
 
 	// Schedule Tx timer, if it is not already active
 	if (!timer_pending(&nm_device->tx_timer)) {
-		nm_device->tx_timer.expires = jiffies + nullmodem_calculate_tx_delay(nm_device);
+		nm_device->tx_timer.expires = jiffies + nm_device->ticks_per_tx_symbol;
 		add_timer(&nm_device->tx_timer);
 	}
 

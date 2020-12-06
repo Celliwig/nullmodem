@@ -43,6 +43,8 @@ struct nullmodem_device
 	unsigned int			status_lines;		/* Status lines (DTR/CTS/etc) */
 	speed_t				baud_rate;		/* Port's selected baud rate */
 	unsigned char			symbol_length;		/* Length in bits of a symbol (inc. start/stop/etc) */
+	unsigned int			ticks_per_tx_symbol;	/* Number of system ticks between symbol transmission */
+	unsigned int			tx_symbols_per_tick;	/* Number of symbols to transmit per system tick */
 //	unsigned char			xchar;
 //	unsigned			nominal_bit_count;
 //	unsigned			actual_bit_count;
