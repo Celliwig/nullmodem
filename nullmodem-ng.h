@@ -27,6 +27,8 @@
 //#define WAKEUP_CHARS		256
 //#define FACTOR 10
 
+#define CONTROL_FLAGS		(TIOCM_DTR | TIOCM_RTS | TIOCM_LOOP)
+#define STATUS_FLAGS		(TIOCM_CAR | TIOCM_CTS | TIOCM_DSR | TIOCM_RI)
 #define RELEVANT_IFLAG(iflag) ((iflag) & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK))
 
 struct nullmodem_device
@@ -42,7 +44,8 @@ struct nullmodem_device
 	struct mutex			tx_mutex;
 	struct timer_list		tx_timer;
 	wait_queue_head_t		wait;
-	unsigned int			status_lines;		/* Status lines (DTR/CTS/etc) */
+	unsigned int			control_register;	/* Status lines (DTR/RTS/etc) */
+	unsigned int			status_register;	/* Status lines (CTS/DSR/etc) */
 	speed_t				baud_rate;		/* Port's selected baud rate */
 	unsigned char			symbol_length;		/* Length in bits of a symbol (inc. start/stop/etc) */
 	unsigned int			ticks_per_tx_symbol;	/* Number of system ticks between symbol transmission */

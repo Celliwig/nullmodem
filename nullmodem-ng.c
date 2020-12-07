@@ -76,78 +76,99 @@ static unsigned int num_devices, scrambled_char = 0xff;
 // ########################################################################
 // # 
 // ########################################################################
-//static int nullmodem_status_lines_swapped(int pins)
-//{
-//	int out = 0;
-//	if (pins & TIOCM_RTS) out |= TIOCM_CTS;
-//	if (pins & TIOCM_DTR) out |= TIOCM_DSR;
-//	if (pins & TIOCM_CTS) out |= TIOCM_RTS;
-//	if (pins & TIOCM_DSR) out |= TIOCM_DTR;
-//	return out;
-//}
+static int nullmodem_status_lines_swap(int pins)
+{
+	int out = 0;
+	if (pins & TIOCM_RTS) out |= TIOCM_CTS;
+	if (pins & TIOCM_DTR) out |= TIOCM_DSR;
+	if (pins & TIOCM_CTS) out |= TIOCM_RTS;
+	if (pins & TIOCM_DSR) out |= TIOCM_DTR;
+	return out;
+}
 
 //static int get_pins(struct nullmodem_end *end)
 //{
 //	int pins = end->pair->control_lines;
 //	if (end == &end->pair->b)
-//		pins = nullmodem_status_lines_swapped(pins);
+//		pins = nullmodem_status_lines_swap(pins);
 //	if (pins&TIOCM_DSR)
 //		pins |= TIOCM_CD;
 //	return pins;
 //}
 
-static void nullmodem_status_lines_update(struct nullmodem_device *nm_device, unsigned int slines_set, unsigned int slines_clear)
+static void nullmodem_status_register_update(struct nullmodem_device *nm_device, unsigned int pins_new)
+{
+	unsigned int pins_changed, pins_old;
+
+	// Filter for valid bits
+	pins_new = pins_new & STATUS_FLAGS;
+
+	// Lock this device
+	mutex_lock(&nm_device->rx_mutex);
+
+	pins_old = nm_device->status_register;					// Get current configuration
+	pins_changed = pins_old ^ pins_new;					// Is there a difference?
+
+	nm_device->status_register = pins_new;
+
+	if (pins_changed)
+	{
+		// Update receiver stats
+		if (pins_changed & TIOCM_CTS)
+		{
+			nm_device->icount.cts++;
+		}
+		if (pins_changed & TIOCM_DSR)
+		{
+			nm_device->icount.dcd++;
+			nm_device->icount.dsr++;
+		}
+
+		// Check if CTS has changed
+		if (nm_device->tty && (nm_device->tty->termios.c_cflag & CRTSCTS) && (pins_changed & TIOCM_CTS))
+		{
+			if (pins_new & TIOCM_CTS)
+			{
+				// CTS = 1, enable receiver
+				nm_device->tty->hw_stopped = 0;
+				tty_wakeup(nm_device->tty);
+			}
+			else
+			{
+				// CTS = 0, so stop receiver
+				nm_device->tty->hw_stopped = 1;
+			}
+		}
+	}
+
+	// Release this device
+	mutex_unlock(&nm_device->rx_mutex);
+}
+
+static void nullmodem_control_register_update(struct nullmodem_device *nm_device, unsigned int rbits_set, unsigned int rbits_clear)
 {
 	unsigned int pins_changed, pins_new, pins_old;
+
+	// Filter for valid bits
+	rbits_set = rbits_set & CONTROL_FLAGS;
+	rbits_clear = rbits_clear & CONTROL_FLAGS;
 
 	// Lock this device
 	mutex_lock(&nm_device->tx_mutex);
 
-	pins_old = nm_device->status_lines;					// Get current configuration
-	pins_new = (pins_old & ~slines_clear) | slines_set;			// Create new configuration
+	pins_old = nm_device->control_register;					// Get current configuration
+	pins_new = (pins_old & ~rbits_clear) | rbits_set;			// Create new configuration
 	pins_changed = pins_old ^ pins_new;					// Is there a difference?
 
-	nm_device->status_lines = pins_new;
+	nm_device->control_register = pins_new;
 
 	// Release this device
 	mutex_unlock(&nm_device->tx_mutex);
 
 	if (pins_changed)
 	{
-		// Lock paired device
-		mutex_lock(&nm_device->paired_with->rx_mutex);
-
-		// Update receiver stats
-		if (pins_changed & TIOCM_RTS)
-		{
-			nm_device->paired_with->icount.cts++;
-		}
-		if (pins_changed & TIOCM_DTR)
-		{
-			nm_device->paired_with->icount.dsr++;
-			nm_device->paired_with->icount.dcd++;
-		}
-
-		// Check if RTS has changed
-		if (nm_device->paired_with->tty &&
-				(nm_device->paired_with->tty->termios.c_cflag & CRTSCTS) &&
-				(pins_changed & TIOCM_RTS))
-		{
-			if (!(pins_new & TIOCM_RTS))
-			{
-				// RTS = 0, so stop receiver
-				nm_device->paired_with->tty->hw_stopped = 1;
-			}
-			else
-			{
-				// RTS = 1, enable receiver
-				nm_device->paired_with->tty->hw_stopped = 0;
-				tty_wakeup(nm_device->paired_with->tty);
-			}
-		}
-
-		// Release paired device
-		mutex_unlock(&nm_device->paired_with->rx_mutex);
+		// Update receiver status register
+		nullmodem_status_register_update(nm_device->paired_with, nullmodem_status_lines_swap(nm_device->control_register));
 	}
 
 //	if (change)
@@ -164,9 +185,9 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 
 	nm_device->baud_rate = tty_get_baud_rate(tty);
 	if (nm_device->baud_rate == 0)
-		nullmodem_status_lines_update(nm_device, 0, TIOCM_DTR|TIOCM_RTS);
+		nullmodem_control_register_update(nm_device, 0, TIOCM_DTR|TIOCM_RTS);
 	else
-		nullmodem_status_lines_update(nm_device, TIOCM_DTR|TIOCM_RTS, 0);
+		nullmodem_control_register_update(nm_device, TIOCM_DTR|TIOCM_RTS, 0);
 
 	// Get this device baud/parity/bits/etc
 	spin_lock_irqsave(&nm_device->tport.lock, flags);
@@ -354,6 +375,8 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	nm_device->icount.tx += tx_transfer_count;				// Update Tx stats
 	mutex_unlock(&nm_device->tx_mutex);
 
+	printd("%s - Transfered %u bytes\n", __FUNCTION__, tx_transfer_count);
+
 	// Schedule Tx timer if Tx FIFO not empty
 	if (!kfifo_is_empty(&nm_device->tx_fifo)) {
 		nm_device->tx_timer.expires = jiffies + nm_device->ticks_per_tx_symbol;
@@ -451,7 +474,7 @@ static void nullmodem_close(struct tty_struct *tty, struct file *file)
 //	if (tty->count > 1) return;
 //
 //	spin_lock_irqsave(&nm_device->slock, flags);
-//	nullmodem_status_lines_update(end, 0, TIOCM_RTS|TIOCM_DTR);
+//	nullmodem_control_register_update(end, 0, TIOCM_RTS|TIOCM_DTR);
 //	tty->hw_stopped = 1;
 //	spin_unlock_irqrestore(&nm_device->slock, flags);
 //
@@ -756,7 +779,7 @@ static void nullmodem_termios_set(struct tty_struct *tty, struct ktermios *old_t
 //	if (tty->termios->c_cflag & CRTSCTS)
 //	{
 //		spin_lock_irqsave(&end->pair->spin, flags);
-//		nullmodem_status_lines_update(end, 0, TIOCM_RTS);
+//		nullmodem_control_register_update(end, 0, TIOCM_RTS);
 //		spin_unlock_irqrestore(&end->pair->spin, flags);
 //	}
 //}
@@ -771,7 +794,7 @@ static void nullmodem_termios_set(struct tty_struct *tty, struct ktermios *old_t
 //	if (tty->termios->c_cflag & CRTSCTS)
 //	{
 //		spin_lock_irqsave(&end->pair->spin, flags);
-//		nullmodem_status_lines_update(end, TIOCM_RTS, 0);
+//		nullmodem_control_register_update(end, TIOCM_RTS, 0);
 //		spin_unlock_irqrestore(&end->pair->spin, flags);
 //	}
 //	if (I_IXOFF(tty))
@@ -811,7 +834,7 @@ static void nullmodem_termios_set(struct tty_struct *tty, struct ktermios *old_t
 //			tty->index, set, clear);
 //
 //	spin_lock_irqsave(&end->pair->spin, flags);
-//	nullmodem_status_lines_update(end, set, clear);
+//	nullmodem_control_register_update(end, set, clear);
 //	spin_unlock_irqrestore(&end->pair->spin, flags);
 //	return 0;
 //}
@@ -902,9 +925,15 @@ static ssize_t nm_stats_show(struct device *dev, struct device_attribute *attr, 
 		char_count += sprintf(buf + char_count, "	Input Speed: %u\n", nm_device->tty->termios.c_ispeed);
 		char_count += sprintf(buf + char_count, "	Output Speed: %u\n", nm_device->tty->termios.c_ospeed);
 
-		char_count += sprintf(buf + char_count, "Status Lines: 0x%04x\n", nm_device->status_lines);
-		char_count += sprintf(buf + char_count, "	Request To Send: %s\n", nm_device->status_lines & TIOCM_RTS ? "true" : "false");
-		char_count += sprintf(buf + char_count, "	Data Terminal Ready: %s\n", nm_device->status_lines & TIOCM_DTR ? "true" : "false");
+		char_count += sprintf(buf + char_count, "Control Register: 0x%04x\n", nm_device->control_register);
+		char_count += sprintf(buf + char_count, "	Request To Send: %s\n", nm_device->control_register & TIOCM_RTS ? "true" : "false");
+		char_count += sprintf(buf + char_count, "	Data Terminal Ready: %s\n", nm_device->control_register & TIOCM_DTR ? "true" : "false");
+
+		char_count += sprintf(buf + char_count, "Status Register: 0x%04x\n", nm_device->status_register);
+		char_count += sprintf(buf + char_count, "	Carrier Detect: %s\n", nm_device->status_register & TIOCM_CAR ? "true" : "false");
+		char_count += sprintf(buf + char_count, "	Clear To Send: %s\n", nm_device->status_register & TIOCM_CTS ? "true" : "false");
+		char_count += sprintf(buf + char_count, "	Data Sender Ready: %s\n", nm_device->status_register & TIOCM_DSR ? "true" : "false");
+		char_count += sprintf(buf + char_count, "	Ring Indicator: %s\n", nm_device->status_register & TIOCM_RI ? "true" : "false");
 
 		char_count += sprintf(buf + char_count, "Tx FIFO\n");
 		char_count += sprintf(buf + char_count, "	FIFO Used: %u\n", kfifo_len(&nm_device->tx_fifo));
