@@ -4,7 +4,7 @@
 #define DRIVER_DESC "NullModem Driver"
 
 #define LOG_PREFIX "nullmodem: "
-#define NM_DEBUG = 1
+//#define NM_DEBUG = 1
 
 #ifdef NM_DEBUG
 #       define printd(...) pr_alert(LOG_PREFIX __VA_ARGS__)

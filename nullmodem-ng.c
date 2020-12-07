@@ -766,40 +766,33 @@ static void nullmodem_termios_set(struct tty_struct *tty, struct ktermios *old_t
 #endif
 }
 
-//static void nullmodem_throttle(struct tty_struct * tty)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//
-//	dprintf("%s - #%d\n", __FUNCTION__, tty->index);
-//
-//	if (I_IXOFF(tty))
-//		nullmodem_send_xchar(tty, STOP_CHAR(tty));
-//
-//	if (tty->termios->c_cflag & CRTSCTS)
-//	{
-//		spin_lock_irqsave(&end->pair->spin, flags);
-//		nullmodem_control_register_update(end, 0, TIOCM_RTS);
-//		spin_unlock_irqrestore(&end->pair->spin, flags);
-//	}
-//}
+static void nullmodem_throttle(struct tty_struct * tty)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
 
-//static void nullmodem_unthrottle(struct tty_struct * tty)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//
-//	dprintf("%s - #%d\n", __FUNCTION__, tty->index);
-//
-//	if (tty->termios->c_cflag & CRTSCTS)
-//	{
-//		spin_lock_irqsave(&end->pair->spin, flags);
-//		nullmodem_control_register_update(end, TIOCM_RTS, 0);
-//		spin_unlock_irqrestore(&end->pair->spin, flags);
-//	}
-//	if (I_IXOFF(tty))
-//		nullmodem_send_xchar(tty, START_CHAR(tty));
-//}
+	printd("#%d: %s\n", tty->index, __FUNCTION__);
+
+	//if (I_IXOFF(tty)) nullmodem_send_xchar(tty, STOP_CHAR(tty));
+
+	if (tty->termios.c_cflag & CRTSCTS)
+	{
+		nullmodem_control_register_update(nm_device, 0, TIOCM_RTS);
+	}
+}
+
+static void nullmodem_unthrottle(struct tty_struct * tty)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
+
+	printd("#%d: %s\n", tty->index, __FUNCTION__);
+
+	if (tty->termios.c_cflag & CRTSCTS)
+	{
+		nullmodem_control_register_update(nm_device, TIOCM_RTS, 0);
+	}
+
+	//if (I_IXOFF(tty)) nullmodem_send_xchar(tty, START_CHAR(tty));
+}
 
 //static void nullmodem_send_xchar(struct tty_struct *tty, char ch)
 //{
@@ -851,9 +844,9 @@ static struct tty_operations nm_serial_ops =
 	.write_room 	= nullmodem_write_room,
 	.ioctl		= nullmodem_ioctl,
 	.set_termios	= nullmodem_termios_set,
-//	.throttle	= nullmodem_throttle,
-//	.unthrottle	= nullmodem_unthrottle,
-//	//.send_xchar	= nullmodem_send_xchar,
+	.throttle	= nullmodem_throttle,
+	.unthrottle	= nullmodem_unthrottle,
+	//.send_xchar	= nullmodem_send_xchar,
 //	.tiocmget	= nullmodem_tiocmget,
 //	.tiocmset	= nullmodem_tiocmset,
 };
