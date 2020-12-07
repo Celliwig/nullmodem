@@ -643,32 +643,31 @@ exit:
 //	return ret;
 //}
 
-//static int nullmodem_ioctl_tiocgicount(struct tty_struct *tty, unsigned long arg)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//	struct serial_icounter_struct icount;
-//
-//	dprintf("%s - #%d\n", __FUNCTION__, tty->index);
-//
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//	icount.cts			= end->icount.cts;
-//	icount.dsr			= end->icount.dsr;
-//	icount.rng			= end->icount.rng;
-//	icount.dcd			= end->icount.dcd;
-//	icount.rx			= end->icount.rx;
-//	icount.tx			= end->icount.tx;
-//	icount.frame		= end->icount.frame;
-//	icount.overrun		= end->icount.overrun;
-//	icount.parity		= end->icount.parity;
-//	icount.brk			= end->icount.brk;
-//	icount.buf_overrun	= end->icount.buf_overrun;
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
-//
-//	if (copy_to_user((void __user *)arg, &icount, sizeof(icount)))
-//		return -EFAULT;
-//	return 0;
-//}
+static int nullmodem_ioctl_tiocgicount(struct tty_struct *tty, unsigned long arg)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
+	struct serial_icounter_struct icount;
+	unsigned long flags;
+
+	printd("#%d: %s\n", tty->index, __FUNCTION__);
+
+	spin_lock_irqsave(&nm_device->tport.lock, flags);
+	icount.cts			= nm_device->icount.cts;
+	icount.dsr			= nm_device->icount.dsr;
+	icount.rng			= nm_device->icount.rng;
+	icount.dcd			= nm_device->icount.dcd;
+	icount.rx			= nm_device->icount.rx;
+	icount.tx			= nm_device->icount.tx;
+	icount.frame			= nm_device->icount.frame;
+	icount.overrun			= nm_device->icount.overrun;
+	icount.parity			= nm_device->icount.parity;
+	icount.brk			= nm_device->icount.brk;
+	icount.buf_overrun		= nm_device->icount.buf_overrun;
+	spin_unlock_irqrestore(&nm_device->tport.lock, flags);
+
+	if (copy_to_user((void __user *)arg, &icount, sizeof(icount))) return -EFAULT;
+	return 0;
+}
 
 static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
 {
@@ -677,18 +676,18 @@ static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned lo
 	if (cmd == TCGETS || cmd == TCSETS)
 		return -ENOIOCTLCMD;
 
-//	switch (cmd)
-//	{
+	switch (cmd)
+	{
 //	case TIOCGSERIAL:
 //		return nullmodem_ioctl_tiocgserial(tty, arg);
 //		break;
 //	case TIOCMIWAIT:
 //		return nullmodem_ioctl_tiocmiwait(tty, arg);
 //		break;
-//	case TIOCGICOUNT:
-//		return nullmodem_ioctl_tiocgicount(tty, arg);
-//		break;
-//	}
+	case TIOCGICOUNT:
+		return nullmodem_ioctl_tiocgicount(tty, arg);
+		break;
+	}
 
 	return -ENOIOCTLCMD;
 }
