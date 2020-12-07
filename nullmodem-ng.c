@@ -86,15 +86,16 @@ static int nullmodem_status_lines_swap(int pins)
 	return out;
 }
 
-//static int get_pins(struct nullmodem_end *end)
-//{
-//	int pins = end->pair->control_lines;
-//	if (end == &end->pair->b)
-//		pins = nullmodem_status_lines_swap(pins);
-//	if (pins&TIOCM_DSR)
-//		pins |= TIOCM_CD;
-//	return pins;
-//}
+static int nullmodem_status_lines_get(struct nullmodem_device *nm_device)
+{
+	int status_lines = 0;
+
+	status_lines |= nm_device->status_register;
+	status_lines |= nm_device->control_register;
+	if (status_lines & TIOCM_DSR) status_lines |= TIOCM_CD;
+
+	return status_lines;
+}
 
 static void nullmodem_status_register_update(struct nullmodem_device *nm_device, unsigned int pins_new)
 {
@@ -252,7 +253,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 	}
 
 //	end->char_length *= FACTOR;
-//	tty->hw_stopped = (tty->termios->c_cflag & CRTSCTS) && !(get_pins(end) & TIOCM_CTS);
+//	tty->hw_stopped = (tty->termios->c_cflag & CRTSCTS) && !(nullmodem_status_lines_get(end) & TIOCM_CTS);
 }
 
 //static inline void handle_end(struct nullmodem_end *end)
@@ -804,33 +805,26 @@ static void nullmodem_unthrottle(struct tty_struct * tty)
 //	end->xchar = ch;
 //}
 
-//static int nullmodem_tiocmget(struct tty_struct *tty)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//	int retval = -EINVAL;
-//
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//	retval = get_pins(end);
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
-//
-//	//dprintf("%s - #%d --> 0x%x\n", __FUNCTION__, tty->index, retval);
-//	return retval;
-//}
+static int nullmodem_tiocmget(struct tty_struct *tty)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
+	int retval = -EINVAL;
 
-//static int nullmodem_tiocmset(struct tty_struct *tty, unsigned int set, unsigned int clear)
-//{
-//	struct nullmodem_end *end = tty->driver_data;
-//	unsigned long flags;
-//
-//	dprintf("%s - #%d set:0x%x clear:0x%x\n", __FUNCTION__,
-//			tty->index, set, clear);
-//
-//	spin_lock_irqsave(&end->pair->spin, flags);
-//	nullmodem_control_register_update(end, set, clear);
-//	spin_unlock_irqrestore(&end->pair->spin, flags);
-//	return 0;
-//}
+	retval = nullmodem_status_lines_get(nm_device);
+
+	printd("#%d: %s:- --> 0x%x\n", tty->index, __FUNCTION__, retval);
+	return retval;
+}
+
+static int nullmodem_tiocmset(struct tty_struct *tty, unsigned int set, unsigned int clear)
+{
+	struct nullmodem_device *nm_device = tty->driver_data;
+
+	printd("#%d: %s:- set:0x%x clear:0x%x\n", tty->index, __FUNCTION__, set, clear);
+
+	nullmodem_control_register_update(nm_device, set, clear);
+	return 0;
+}
 
 // ########################################################################
 // # Supported TTY operations
@@ -847,8 +841,8 @@ static struct tty_operations nm_serial_ops =
 	.throttle	= nullmodem_throttle,
 	.unthrottle	= nullmodem_unthrottle,
 	//.send_xchar	= nullmodem_send_xchar,
-//	.tiocmget	= nullmodem_tiocmget,
-//	.tiocmset	= nullmodem_tiocmset,
+	.tiocmget	= nullmodem_tiocmget,
+	.tiocmset	= nullmodem_tiocmset,
 };
 
 // ########################################################################
