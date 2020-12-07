@@ -184,11 +184,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 	unsigned int ticks_per_symbol;
 	unsigned long flags;
 
-	nm_device->baud_rate = tty_get_baud_rate(tty);
-	if (nm_device->baud_rate == 0)
-		nullmodem_control_register_update(nm_device, 0, TIOCM_DTR|TIOCM_RTS);
-	else
-		nullmodem_control_register_update(nm_device, TIOCM_DTR|TIOCM_RTS, 0);
+	printd("#%d: %s\n", tty->index, __FUNCTION__);
 
 	// Get this device baud/parity/bits/etc
 	spin_lock_irqsave(&nm_device->tport.lock, flags);
@@ -197,6 +193,18 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 	// Filter flow control
 	cflag_device = nm_device->tty->termios.c_cflag & ~CRTSCTS;
 	spin_unlock_irqrestore(&nm_device->tport.lock, flags);
+
+	nm_device->baud_rate = tty_get_baud_rate(tty);
+	if (nm_device->baud_rate == 0)
+	{
+		nullmodem_control_register_update(nm_device, 0, TIOCM_DTR|TIOCM_RTS);
+		// Just return if baud rate zero
+		return;
+	}
+	else
+	{
+		nullmodem_control_register_update(nm_device, TIOCM_DTR|TIOCM_RTS, 0);
+	}
 
 	// Check that the other port is allocated
 	if (nm_device->paired_with->tty)
