@@ -685,18 +685,18 @@ static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned lo
 	if (cmd == TCGETS || cmd == TCSETS)
 		return -ENOIOCTLCMD;
 
-//	switch (cmd)
-//	{
+	switch (cmd)
+	{
 //	case TIOCGSERIAL:
 //		return nullmodem_ioctl_tiocgserial(tty, arg);
 //		break;
 //	case TIOCMIWAIT:
 //		return nullmodem_ioctl_tiocmiwait(tty, arg);
 //		break;
-//	case TIOCGICOUNT:
-//		return nullmodem_ioctl_tiocgicount(tty, arg);
-//		break;
-//	}
+	case TIOCGICOUNT:
+		return nullmodem_ioctl_tiocgicount(tty, arg);
+		break;
+	}
 
 	return -ENOIOCTLCMD;
 }
@@ -791,10 +791,10 @@ static void nullmodem_throttle(struct tty_struct * tty)
 
 	//if (I_IXOFF(tty)) nullmodem_send_xchar(tty, STOP_CHAR(tty));
 
-//	if (tty->termios.c_cflag & CRTSCTS)
-//	{
-//		nullmodem_control_register_update(nm_device, 0, TIOCM_RTS);
-//	}
+	if (tty->termios.c_cflag & CRTSCTS)
+	{
+		nullmodem_control_register_update(nm_device, 0, TIOCM_RTS);
+	}
 }
 
 static void nullmodem_unthrottle(struct tty_struct * tty)
@@ -803,10 +803,10 @@ static void nullmodem_unthrottle(struct tty_struct * tty)
 
 	printd("#%d: %s\n", tty->index, __FUNCTION__);
 
-//	if (tty->termios.c_cflag & CRTSCTS)
-//	{
-//		nullmodem_control_register_update(nm_device, TIOCM_RTS, 0);
-//	}
+	if (tty->termios.c_cflag & CRTSCTS)
+	{
+		nullmodem_control_register_update(nm_device, TIOCM_RTS, 0);
+	}
 
 	//if (I_IXOFF(tty)) nullmodem_send_xchar(tty, START_CHAR(tty));
 }
@@ -854,11 +854,11 @@ static struct tty_operations nm_serial_ops =
 	.write_room 	= nullmodem_write_room,
 	.ioctl		= nullmodem_ioctl,
 	.set_termios	= nullmodem_termios_set,
-//	.throttle	= nullmodem_throttle,
-//	.unthrottle	= nullmodem_unthrottle,
-//	//.send_xchar	= nullmodem_send_xchar,
-//	.tiocmget	= nullmodem_tiocmget,
-//	.tiocmset	= nullmodem_tiocmset,
+	.throttle	= nullmodem_throttle,
+	.unthrottle	= nullmodem_unthrottle,
+	//.send_xchar	= nullmodem_send_xchar,
+	.tiocmget	= nullmodem_tiocmget,
+	.tiocmset	= nullmodem_tiocmset,
 };
 
 // ########################################################################
