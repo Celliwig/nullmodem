@@ -348,6 +348,10 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 
 	nm_device = from_timer(nm_device, tl, tx_timer);
 
+	// Check both ends are active
+	if ((nm_device->tty == NULL) || (nm_device->paired_with->tty == NULL)) return;
+	if ((nm_device->tty->hw_stopped) || (nm_device->paired_with->tty->hw_stopped)) return;
+
 	tx_transfer_count = 1;
 	// Check whether multi-byte transfers are enabled
 	if (burst_transfer)
@@ -382,15 +386,20 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	// Remove the actual data
 	kfifo_out(&nm_device->tx_fifo, &tx_drain, tx_transfer_count);
 	nm_device->icount.tx += tx_transfer_count;				// Update Tx stats
-	mutex_unlock(&nm_device->tx_mutex);
-
-	printd("%s - Transfered %u bytes\n", __FUNCTION__, tx_transfer_count);
 
 	// Schedule Tx timer if Tx FIFO not empty
 	if (!kfifo_is_empty(&nm_device->tx_fifo)) {
-		nm_device->tx_timer.expires = jiffies + nm_device->ticks_per_tx_symbol;
-		add_timer(&nm_device->tx_timer);
+		if (!timer_pending(&nm_device->tx_timer)) {
+			nm_device->tx_timer.expires = jiffies + nm_device->ticks_per_tx_symbol;
+			add_timer(&nm_device->tx_timer);
+		}
 	}
+	mutex_unlock(&nm_device->tx_mutex);
+
+//	if (kfifo_len(&nm_device->tx_fifo) < WAKEUP_CHARS)
+		tty_wakeup(nm_device->tty);
+
+	printd("%s - Transfered %u bytes\n", __FUNCTION__, tx_transfer_count);
 }
 
 static void nullmodem_timer_tx_set(struct timer_list *tl)
@@ -510,14 +519,14 @@ static int nullmodem_write(struct tty_struct *tty, const unsigned char *buffer, 
 	if (!nm_port->count) {
 		spin_unlock_irqrestore(&nm_port->lock, flags);
 		retval = -EINVAL;
-		goto exit;
+		goto nullmodem_write_exit;
 	}
 	spin_unlock_irqrestore(&nm_port->lock, flags);
 
 	retval = kfifo_in(&nm_device->tx_fifo, buffer, count);
 	nullmodem_timer_tx_set(&nm_device->tx_timer);
 	printd("#%d: %s:- %d bytes --> %d written\n", tty->index, __FUNCTION__, count, retval);
-exit:
+nullmodem_write_exit:
 	mutex_unlock(&nm_device->tx_mutex);
 	return retval;
 }
@@ -537,13 +546,13 @@ static int nullmodem_write_room(struct tty_struct *tty)
 	spin_lock_irqsave(&nm_port->lock, flags);
 	if (!nm_port->count) {
 		spin_unlock_irqrestore(&nm_port->lock, flags);
-		goto exit;
+		goto nullmodem_write_room_exit;
 	}
 	spin_unlock_irqrestore(&nm_port->lock, flags);
 
 	room = kfifo_avail(&nm_device->tx_fifo);
 	printd("#%d: %s:- %d\n", tty->index, __FUNCTION__, room);
-exit:
+nullmodem_write_room_exit:
 	mutex_unlock(&nm_device->tx_mutex);
 	return room;
 }
@@ -676,18 +685,18 @@ static int nullmodem_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned lo
 	if (cmd == TCGETS || cmd == TCSETS)
 		return -ENOIOCTLCMD;
 
-	switch (cmd)
-	{
+//	switch (cmd)
+//	{
 //	case TIOCGSERIAL:
 //		return nullmodem_ioctl_tiocgserial(tty, arg);
 //		break;
 //	case TIOCMIWAIT:
 //		return nullmodem_ioctl_tiocmiwait(tty, arg);
 //		break;
-	case TIOCGICOUNT:
-		return nullmodem_ioctl_tiocgicount(tty, arg);
-		break;
-	}
+//	case TIOCGICOUNT:
+//		return nullmodem_ioctl_tiocgicount(tty, arg);
+//		break;
+//	}
 
 	return -ENOIOCTLCMD;
 }
@@ -782,10 +791,10 @@ static void nullmodem_throttle(struct tty_struct * tty)
 
 	//if (I_IXOFF(tty)) nullmodem_send_xchar(tty, STOP_CHAR(tty));
 
-	if (tty->termios.c_cflag & CRTSCTS)
-	{
-		nullmodem_control_register_update(nm_device, 0, TIOCM_RTS);
-	}
+//	if (tty->termios.c_cflag & CRTSCTS)
+//	{
+//		nullmodem_control_register_update(nm_device, 0, TIOCM_RTS);
+//	}
 }
 
 static void nullmodem_unthrottle(struct tty_struct * tty)
@@ -794,10 +803,10 @@ static void nullmodem_unthrottle(struct tty_struct * tty)
 
 	printd("#%d: %s\n", tty->index, __FUNCTION__);
 
-	if (tty->termios.c_cflag & CRTSCTS)
-	{
-		nullmodem_control_register_update(nm_device, TIOCM_RTS, 0);
-	}
+//	if (tty->termios.c_cflag & CRTSCTS)
+//	{
+//		nullmodem_control_register_update(nm_device, TIOCM_RTS, 0);
+//	}
 
 	//if (I_IXOFF(tty)) nullmodem_send_xchar(tty, START_CHAR(tty));
 }
@@ -845,11 +854,11 @@ static struct tty_operations nm_serial_ops =
 	.write_room 	= nullmodem_write_room,
 	.ioctl		= nullmodem_ioctl,
 	.set_termios	= nullmodem_termios_set,
-	.throttle	= nullmodem_throttle,
-	.unthrottle	= nullmodem_unthrottle,
-	//.send_xchar	= nullmodem_send_xchar,
-	.tiocmget	= nullmodem_tiocmget,
-	.tiocmset	= nullmodem_tiocmset,
+//	.throttle	= nullmodem_throttle,
+//	.unthrottle	= nullmodem_unthrottle,
+//	//.send_xchar	= nullmodem_send_xchar,
+//	.tiocmget	= nullmodem_tiocmget,
+//	.tiocmset	= nullmodem_tiocmset,
 };
 
 // ########################################################################
@@ -866,13 +875,13 @@ static int nullmodem_port_activate(struct tty_port *tport, struct tty_struct *tt
 	nm_device->tty = tty;
 
 	// Create Tx FIFO
-	if (kfifo_alloc(&nm_device->tx_fifo, tx_buffer_size, GFP_KERNEL)) goto exit;
+	if (kfifo_alloc(&nm_device->tx_fifo, tx_buffer_size, GFP_KERNEL)) goto nullmodem_port_activate_exit;
 
 	// Setup timer
 	timer_setup(&nm_device->tx_timer, nullmodem_timer_tx_handle, 0);
 
 	err = 0;
-exit:
+nullmodem_port_activate_exit:
 	return err;
 }
 
