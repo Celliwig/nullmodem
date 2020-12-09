@@ -352,11 +352,15 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	if ((nm_device->tty == NULL) || (nm_device->paired_with->tty == NULL)) return;
 	if ((nm_device->tty->hw_stopped) || (nm_device->paired_with->tty->hw_stopped)) return;
 
+	// Save the delta between requested and actual timer expiry
+	nm_device->delta_jiffies = (unsigned char) (jiffies - nm_device->tx_timer.expires);
+
 	tx_transfer_count = 1;
 	// Check whether multi-byte transfers are enabled
 	if (burst_transfer)
 	{
-		tx_transfer_count = nm_device->tx_symbols_per_tick;
+		// If burst transfers are supported, calculate the maximum number of symbols to transfer
+		tx_transfer_count = nm_device->tx_symbols_per_tick * (nm_device->delta_jiffies + 1);
 	}
 
 	mutex_lock(&nm_device->tx_mutex);
@@ -946,6 +950,7 @@ static ssize_t nm_stats_show(struct device *dev, struct device_attribute *attr, 
 		char_count += sprintf(buf + char_count, "	Symbol Length: %u\n", nm_device->symbol_length);
 		char_count += sprintf(buf + char_count, "	Ticks per Symbol: %u\n", nm_device->ticks_per_tx_symbol);
 		char_count += sprintf(buf + char_count, "	Symbols per Tick: %u\n", nm_device->tx_symbols_per_tick);
+		char_count += sprintf(buf + char_count, "	Delta Jiffies: %u\n", nm_device->delta_jiffies);
 
 		char_count += sprintf(buf + char_count, "ICOUNT Stats\n");
 		char_count += sprintf(buf + char_count, "	Clear To Send: %u\n", nm_device->icount.cts);

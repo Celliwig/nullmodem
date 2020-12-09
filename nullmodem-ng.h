@@ -47,9 +47,10 @@ struct nullmodem_device
 	unsigned int			control_register;	/* Status lines (DTR/RTS/etc) */
 	unsigned int			status_register;	/* Status lines (CTS/DSR/etc) */
 	speed_t				baud_rate;		/* Port's selected baud rate */
-	unsigned char			symbol_length;		/* Length in bits of a symbol (inc. start/stop/etc) */
 	unsigned int			ticks_per_tx_symbol;	/* Number of system ticks between symbol transmission */
 	unsigned int			tx_symbols_per_tick;	/* Number of symbols to transmit per system tick */
+	unsigned char			symbol_length;		/* Length in bits of a symbol (inc. start/stop/etc) */
+	unsigned char 			delta_jiffies;		/* Difference between the requested timer expiry and actual */
 //	unsigned char			xchar;
 //	unsigned			nominal_bit_count;
 //	unsigned			actual_bit_count;
