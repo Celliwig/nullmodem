@@ -166,7 +166,7 @@ static void nullmodem_control_register_update(struct nullmodem_device *nm_device
 	if (pins_changed)
 	{
 		// Update receiver status register
-		nullmodem_status_register_update(nm_device->paired_with, nullmodem_status_lines_swap(nm_device->control_register));
+		nullmodem_status_register_update(nm_device->paired_with, nullmodem_status_lines_swap(pins_new));
 	}
 
 //	if (change)
@@ -425,10 +425,11 @@ static int nullmodem_open(struct tty_struct *tty, struct file *file)
 {
 	struct nullmodem_device *nm_device = nullmodem_devices[tty->index];
 	struct tty_port *nm_port = &nm_device->tport;
-//	unsigned long flags;
 	int status;
 
 	printd("#%d: %s:- TTY count: %d\n", tty->index, __FUNCTION__, tty->count);
+
+	if (tty->count > 1) return 0;
 
 	/* initialize the pointer in case something fails */
 	tty->driver_data = NULL;
@@ -444,40 +445,27 @@ static int nullmodem_open(struct tty_struct *tty, struct file *file)
 	nullmodem_termios_update(tty);
 
 	return status;
-
-//	if (tty->count > 1) return 0;
-//
-//	spin_lock_irqsave(&nm_device->slock, flags);
-//	tty->driver_data = nm_device;
-//	end->nominal_bit_count = 0;
-//	end->actual_bit_count = 0;
-//	spin_unlock_irqrestore(&nm_device->slock, flags);
-//
-//	return 0;
 }
 
 static void nullmodem_close(struct tty_struct *tty, struct file *file)
 {
 	struct nullmodem_device *nm_device = tty->driver_data;
 	struct tty_port *nm_port;
-//	unsigned long flags;
 
 	printd("#%d: %s:- TTY count: %d\n", tty->index, __FUNCTION__, tty->count);
+
+	if (tty->count > 1) return;
+
+	nullmodem_control_register_update(end, 0, TIOCM_RTS|TIOCM_DTR);
+	tty->hw_stopped = 1;
 
 	if (nm_device) {
 		nm_port = &nm_device->tport;
 		tty_port_close(nm_port, tty, file);
 	}
 
-//	if (tty->count > 1) return;
-//
-//	spin_lock_irqsave(&nm_device->slock, flags);
-//	nullmodem_control_register_update(end, 0, TIOCM_RTS|TIOCM_DTR);
-//	tty->hw_stopped = 1;
-//	spin_unlock_irqrestore(&nm_device->slock, flags);
-//
-//	wake_up_interruptible(&tty->read_wait);
-//	wake_up_interruptible(&tty->write_wait);
+	wake_up_interruptible(&tty->read_wait);
+	wake_up_interruptible(&tty->write_wait);
 }
 
 static int nullmodem_write(struct tty_struct *tty, const unsigned char *buffer, int count)
