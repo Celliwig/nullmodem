@@ -56,9 +56,6 @@ MODULE_PARM_DESC(burst_transfer, "Allow multiple characters to be transfer.\n");
 static unsigned int device_pairs = NULLMODEM_PAIRS;
 module_param(device_pairs, int, 0444);
 MODULE_PARM_DESC(device_pairs, "Number of linked pairs to create.\n");
-static unsigned int rx_buffer_size = DEFAULT_BUF_SIZE;
-module_param(rx_buffer_size, int, 0444);
-MODULE_PARM_DESC(rx_buffer_size, "Size of the Rx buffer.\n");
 static unsigned int tx_buffer_size = DEFAULT_BUF_SIZE;
 module_param(tx_buffer_size, int, 0444);
 MODULE_PARM_DESC(tx_buffer_size, "Size of the Tx buffer.\n");
@@ -256,81 +253,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 		nm_device->ticks_per_tx_symbol = 1;
 		nm_device->tx_symbols_per_tick = DIV_ROUND_CLOSEST(DIV_ROUND_CLOSEST(nm_device->baud_rate, nm_device->symbol_length), TIMER_FREQ);
 	}
-
-//	end->char_length *= FACTOR;
-//	tty->hw_stopped = (tty->termios->c_cflag & CRTSCTS) && !(nullmodem_status_lines_get(end) & TIOCM_CTS);
 }
-
-//static inline void handle_end(struct nullmodem_end *end)
-//{
-//	if (!end->tty)
-//		return;
-//	if (end->tty->hw_stopped)
-//	{
-//		//dprintf("%s - #%d: hw_stopped\n", __FUNCTION__, end->tty->index);
-//		return;
-//	}
-//	unsigned nominal_bits = end->tty->termios->c_ospeed * FACTOR * delta_jiffies / HZ;
-//	unsigned add_bits = end->nominal_bit_count - end->actual_bit_count;
-//	unsigned chars = (nominal_bits+add_bits) / end->char_length;
-//	unsigned actual_bits = chars * end->char_length;
-//
-//	end->nominal_bit_count += nominal_bits;
-//	end->actual_bit_count  += actual_bits;
-//
-////	dprintf("%s - #%d: nb %u add %u ab %u ch %u nbc %u abc %u\n", __FUNCTION__,
-////			end->tty->index, nominal_bits, add_bits, actual_bits, chars,
-////			end->nominal_bit_count, end->actual_bit_count);
-//
-//	if (chars == 0)
-//		return;
-//
-//	int cnt = kfifo_out(&end->fifo, drain, chars);
-//	if (cnt < chars)
-//	{
-//		end->nominal_bit_count = 0;
-//		end->actual_bit_count = 0;
-//	}
-//	if (cnt <= 0)
-//	{
-//		//dprintf("%s - #%d: fifo empty\n", __FUNCTION__, end->tty->index);
-//		return;
-//	}
-//
-////	dprintf("%s - #%d: drained %d bytes\n", __FUNCTION__, end->tty->index, cnt);
-//
-//	if (end->other->tty)
-//	{
-//		if (end->tty->termios->c_ospeed == end->other->tty->termios->c_ispeed
-//		&& (end->tty->termios->c_cflag & (CSIZE|PARENB|CSTOPB))
-//		 ==(end->other->tty->termios->c_cflag & (CSIZE|PARENB|CSTOPB)))
-//		{
-//			tcflag_t csize = (end->tty->termios->c_cflag&CSIZE);
-//			if (csize != CS8)
-//			{
-//				int i;
-//				unsigned char mask = 0xFF;
-//				switch (csize)
-//				{
-//				case CS7: mask = 0x7F; break;
-//				case CS6: mask = 0x3F; break;
-//				case CS5: mask = 0x1F; break;
-//				}
-//				for (i=0; i<cnt; ++i)
-//					drain[i] &= mask;
-//			}
-//			int written = tty_insert_flip_string(end->other->tty, drain, cnt);
-//			if (written > 0)
-//			{
-//				//dprintf("%s - #%d -> #%d: copied %d bytes\n", __FUNCTION__, end->tty->index, end->other->tty->index, written);
-//				tty_flip_buffer_push(end->other->tty);
-//			}
-//		}
-//	}
-//
-////	if (kfifo_len(&end->fifo) < WAKEUP_CHARS)
-//		tty_wakeup(end->tty);
-//}
 
 // ########################################################################
 // # Timer routines
@@ -338,7 +261,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 static void nullmodem_timer_tx_handle(struct timer_list *tl)
 {
 	struct nullmodem_device *nm_device;
-	unsigned char tx_drain[DRAIN_BUF_SIZE], tx_transfer_count;
+	unsigned char symbol_mask, tx_drain[DRAIN_BUF_SIZE], tx_transfer_count;
 	unsigned int i;
 
 	printd("%s\n", __FUNCTION__);
@@ -365,10 +288,20 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	// Don't remove, don't know how many can actually be transfered
 	tx_transfer_count = kfifo_out_peek(&nm_device->tx_fifo, &tx_drain, tx_transfer_count);
 
-	// Scramble characters if the ends are mismatched
-	if (!nm_device->tx_rx_matched) {
-		for (i = 0; i < tx_transfer_count; i++)
-		{
+	// Get symbol length
+	switch (nm_device->tty->termios.c_cflag & CSIZE)
+	{
+		case CS5: symbol_mask = 0x1F; break;
+		case CS6: symbol_mask = 0x3F; break;
+		case CS7: symbol_mask = 0x7F; break;
+		default: symbol_mask = 0xFF; break;
+	}
+	for (i = 0; i < tx_transfer_count; i++)
+	{
+		// Enforce symbol length
+		tx_drain[i] &= symbol_mask;
+		// Scramble characters if the ends are mismatched
+		if (!nm_device->tx_rx_matched) {
 			tx_drain[i] = scrambled_char = (scrambled_char ^ tx_drain[i]) >> 1;
 		}
 	}
@@ -456,7 +389,7 @@ static void nullmodem_close(struct tty_struct *tty, struct file *file)
 
 	if (tty->count > 1) return;
 
-	nullmodem_control_register_update(end, 0, TIOCM_RTS|TIOCM_DTR);
+	nullmodem_control_register_update(nm_device, 0, TIOCM_RTS|TIOCM_DTR);
 	tty->hw_stopped = 1;
 
 	if (nm_device) {
