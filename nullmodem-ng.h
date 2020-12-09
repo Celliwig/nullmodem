@@ -22,10 +22,7 @@
 #define DRAIN_BUF_SIZE		256
 #define MAX_DEVICES		10
 #define TIMER_FREQ		HZ
-//#define TIMER_INTERVAL	(HZ/20)
-////#define TIMER_INTERVAL	HZ
 //#define WAKEUP_CHARS		256
-//#define FACTOR 10
 
 #define CONTROL_FLAGS		(TIOCM_DTR | TIOCM_RTS | TIOCM_LOOP)
 #define STATUS_FLAGS		(TIOCM_CAR | TIOCM_CTS | TIOCM_DSR | TIOCM_RI)
@@ -52,8 +49,6 @@ struct nullmodem_device
 	unsigned char			symbol_length;		/* Length in bits of a symbol (inc. start/stop/etc) */
 	unsigned char 			delta_jiffies;		/* Difference between the requested timer expiry and actual */
 //	unsigned char			xchar;
-//	unsigned			nominal_bit_count;
-//	unsigned			actual_bit_count;
 	bool				registered;
 	bool				tx_rx_matched;		/* Tx baud/bit/parity matches paired device */
 };
