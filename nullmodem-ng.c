@@ -70,9 +70,6 @@ static struct tty_driver *nullmodem_tty_driver;
 static struct nullmodem_device	*nullmodem_devices[MAX_DEVICES];
 static unsigned int num_devices, scrambled_char = 0xff;
 
-//static unsigned long last_timer_jiffies;
-//static unsigned long delta_jiffies;
-
 // ########################################################################
 // # 
 // ########################################################################
@@ -419,27 +416,6 @@ static void nullmodem_timer_tx_set(struct timer_list *tl)
 		nm_device->tx_timer.expires = jiffies + nm_device->ticks_per_tx_symbol;
 		add_timer(&nm_device->tx_timer);
 	}
-
-//	int i;
-//	unsigned long flags;
-//	//dprint("%s jiffies: %lu\n", __FUNCTION__, jiffies);
-//
-//	unsigned long current_jiffies = jiffies;
-//	delta_jiffies = current_jiffies - last_timer_jiffies;
-//	last_timer_jiffies = current_jiffies;
-//
-//	for (i=0; i<NULLMODEM_PAIRS; ++i)
-//	{
-//		struct nullmodem_pair *pair = &pair_table[i];
-//
-//		spin_lock_irqsave(&pair->spin, flags);
-//		handle_end(&pair->a);
-//		handle_end(&pair->b);
-//		spin_unlock_irqrestore(&pair->spin, flags);
-//	}
-//
-//	nullmodem_timer.expires += TIMER_INTERVAL;
-//	add_timer(&nullmodem_timer);
 }
 
 // ########################################################################
