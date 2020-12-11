@@ -829,6 +829,8 @@ static ssize_t nm_stats_show(struct device *dev, struct device_attribute *attr, 
 		char_count += sprintf(buf + char_count, "	Input Speed: %u\n", nm_device->tty->termios.c_ispeed);
 		char_count += sprintf(buf + char_count, "	Output Speed: %u\n", nm_device->tty->termios.c_ospeed);
 
+		char_count += sprintf(buf + char_count, "Configuration: %u\n", nm_device->tty->termios.c_cflag);
+
 		char_count += sprintf(buf + char_count, "Control Register: 0x%04x\n", nm_device->control_register);
 		char_count += sprintf(buf + char_count, "	Request To Send: %s\n", nm_device->control_register & TIOCM_RTS ? "true" : "false");
 		char_count += sprintf(buf + char_count, "	Data Terminal Ready: %s\n", nm_device->control_register & TIOCM_DTR ? "true" : "false");
