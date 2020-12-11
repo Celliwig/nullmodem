@@ -185,7 +185,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 	nm1_rx = nm_device->tty->termios.c_ispeed;
 	nm1_tx = nm_device->tty->termios.c_ospeed;
 	// Filter flow control
-	cflag_device = nm_device->tty->termios.c_cflag & ~CRTSCTS;
+	cflag_device = nm_device->tty->termios.c_cflag & ~FILTER_MODE;
 	spin_unlock_irqrestore(&nm_device->tport.lock, flags);
 
 	nm_device->baud_rate = tty_get_baud_rate(tty);
@@ -208,7 +208,7 @@ static void nullmodem_termios_update(struct tty_struct *tty)
 		nm2_rx = nm_device->paired_with->tty->termios.c_ispeed;
 		nm2_tx = nm_device->paired_with->tty->termios.c_ospeed;
 		// Filter flow control
-		cflag_paired = nm_device->paired_with->tty->termios.c_cflag & ~CRTSCTS;
+		cflag_paired = nm_device->paired_with->tty->termios.c_cflag & ~FILTER_MODE;
 		spin_unlock_irqrestore(&nm_device->paired_with->tport.lock, flags);
 
 		// Check whether async parameters match on either end
