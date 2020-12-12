@@ -94,12 +94,13 @@ static int nullmodem_status_lines_get(struct nullmodem_device *nm_device)
 static void nullmodem_status_register_update(struct nullmodem_device *nm_device, unsigned int pins_new)
 {
 	unsigned int pins_changed, pins_old;
+	unsigned long flags;
 
 	// Filter for valid bits
 	pins_new = pins_new & STATUS_FLAGS;
 
 	// Lock this device
-	mutex_lock(&nm_device->rx_mutex);
+	spin_lock_irqsave(&nm_device->rx_spinlock, flags);
 
 	pins_old = nm_device->status_register;					// Get current configuration
 	pins_changed = pins_old ^ pins_new;					// Is there a difference?
@@ -137,19 +138,20 @@ static void nullmodem_status_register_update(struct nullmodem_device *nm_device,
 	}
 
 	// Release this device
-	mutex_unlock(&nm_device->rx_mutex);
+	spin_unlock_irqrestore(&nm_device->rx_spinlock, flags);
 }
 
 static void nullmodem_control_register_update(struct nullmodem_device *nm_device, unsigned int rbits_set, unsigned int rbits_clear)
 {
 	unsigned int pins_changed, pins_new, pins_old;
+	unsigned long flags;
 
 	// Filter for valid bits
 	rbits_set = rbits_set & CONTROL_FLAGS;
 	rbits_clear = rbits_clear & CONTROL_FLAGS;
 
 	// Lock this device
-	mutex_lock(&nm_device->tx_mutex);
+	spin_lock_irqsave(&nm_device->tx_spinlock, flags);
 
 	pins_old = nm_device->control_register;					// Get current configuration
 	pins_new = (pins_old & ~rbits_clear) | rbits_set;			// Create new configuration
@@ -158,7 +160,7 @@ static void nullmodem_control_register_update(struct nullmodem_device *nm_device
 	nm_device->control_register = pins_new;
 
 	// Release this device
-	mutex_unlock(&nm_device->tx_mutex);
+	spin_unlock_irqrestore(&nm_device->tx_spinlock, flags);
 
 	if (pins_changed)
 	{
@@ -263,6 +265,7 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	struct nullmodem_device *nm_device;
 	unsigned char symbol_mask, tx_drain[DRAIN_BUF_SIZE], tx_transfer_count;
 	unsigned int i;
+	unsigned long flags;
 
 	printd("%s\n", __FUNCTION__);
 
@@ -283,7 +286,7 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 		tx_transfer_count = nm_device->tx_symbols_per_tick * (nm_device->delta_jiffies + 1);
 	}
 
-	mutex_lock(&nm_device->tx_mutex);
+	spin_lock_irqsave(&nm_device->tx_spinlock, flags);
 	// Extract from FIFO a set number of bytes
 	// Don't remove, don't know how many can actually be transfered
 	tx_transfer_count = kfifo_out_peek(&nm_device->tx_fifo, &tx_drain, tx_transfer_count);
@@ -307,7 +310,7 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	}
 
 	// Write to receiver buffer
-	mutex_lock(&nm_device->paired_with->rx_mutex);
+	spin_lock_irqsave(&nm_device->paired_with->rx_spinlock, flags);
 	// Write byte(s)
 	tx_transfer_count = tty_insert_flip_string(&nm_device->paired_with->tport, tx_drain, tx_transfer_count);
 	if (tx_transfer_count > 0)
@@ -315,7 +318,7 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 		tty_flip_buffer_push(&nm_device->paired_with->tport);		// Push buffer to user
 		nm_device->paired_with->icount.rx += tx_transfer_count;		// Update Rx stats
 	}
-	mutex_unlock(&nm_device->paired_with->rx_mutex);
+	spin_unlock_irqrestore(&nm_device->paired_with->rx_spinlock, flags);
 
 	// Remove the actual data
 	kfifo_out(&nm_device->tx_fifo, &tx_drain, tx_transfer_count);
@@ -328,7 +331,7 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 			add_timer(&nm_device->tx_timer);
 		}
 	}
-	mutex_unlock(&nm_device->tx_mutex);
+	spin_unlock_irqrestore(&nm_device->tx_spinlock, flags);
 
 //	if (kfifo_len(&nm_device->tx_fifo) < WAKEUP_CHARS)
 		tty_wakeup(nm_device->tty);
@@ -412,7 +415,7 @@ static int nullmodem_write(struct tty_struct *tty, const unsigned char *buffer, 
 
 	if (!nm_device) return -ENODEV;
 
-	mutex_lock(&nm_device->tx_mutex);
+	spin_lock_irqsave(&nm_device->tx_spinlock, flags);
 
 	nm_port = &nm_device->tport;
 	// Check that port configured
@@ -428,7 +431,7 @@ static int nullmodem_write(struct tty_struct *tty, const unsigned char *buffer, 
 	nullmodem_timer_tx_set(&nm_device->tx_timer);
 	printd("#%d: %s:- %d bytes --> %d written\n", tty->index, __FUNCTION__, count, retval);
 nullmodem_write_exit:
-	mutex_unlock(&nm_device->tx_mutex);
+	spin_unlock_irqrestore(&nm_device->tx_spinlock, flags);
 	return retval;
 }
 
@@ -441,7 +444,7 @@ static int nullmodem_write_room(struct tty_struct *tty)
 
 	if (!nm_device) return -ENODEV;
 
-	mutex_lock(&nm_device->tx_mutex);
+	spin_lock_irqsave(&nm_device->tx_spinlock, flags);
 
 	nm_port = &nm_device->tport;
 	spin_lock_irqsave(&nm_port->lock, flags);
@@ -454,7 +457,7 @@ static int nullmodem_write_room(struct tty_struct *tty)
 	room = kfifo_avail(&nm_device->tx_fifo);
 	printd("#%d: %s:- %d\n", tty->index, __FUNCTION__, room);
 nullmodem_write_room_exit:
-	mutex_unlock(&nm_device->tx_mutex);
+	spin_unlock_irqrestore(&nm_device->tx_spinlock, flags);
 	return room;
 }
 
@@ -944,8 +947,8 @@ static int __init nullmodem_init(void)
 			nm_other = nm_device;					// Save pointer to create a pair of linked devices
 		}
 
-		mutex_init(&nm_device->rx_mutex);				// Initialise Rx mutex
-		mutex_init(&nm_device->tx_mutex);				// Initialise Tx mutex
+		spin_lock_init(&nm_device->rx_spinlock);			// Initialise Rx spinlock
+		spin_lock_init(&nm_device->tx_spinlock);			// Initialise Tx spinlock
 
 		tty_port_init(&nm_device->tport);				// Initialise TTY port
 		nm_device->tport.ops = &nm_port_ops;				// Set TTY port operations

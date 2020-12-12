@@ -37,9 +37,9 @@ struct nullmodem_device
 	struct nullmodem_device		*paired_with;		/* Pointer to device paired with this one */
 	struct async_icount		icount;			/* Device statistics */
 //	struct serial_struct		serial;			/* Serial port config */
-	struct mutex			rx_mutex;
+	spinlock_t			rx_spinlock;
 	struct kfifo			tx_fifo;
-	struct mutex			tx_mutex;
+	spinlock_t			tx_spinlock;
 	struct timer_list		tx_timer;
 	wait_queue_head_t		wait;
 	unsigned int			control_register;	/* Status lines (DTR/RTS/etc) */
