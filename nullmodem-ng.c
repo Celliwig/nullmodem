@@ -272,8 +272,8 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 	nm_device = from_timer(nm_device, tl, tx_timer);
 
 	// Check both ends are active
-	if ((nm_device->tty == NULL) || (nm_device->paired_with->tty == NULL)) return;
-	if ((nm_device->tty->hw_stopped) || (nm_device->paired_with->tty->hw_stopped)) return;
+	if ((nm_device->tty == NULL) || (nm_device->paired_with->tty == NULL)) goto nullmodem_timer_tx_handle_error;
+	if ((nm_device->tty->hw_stopped) || (nm_device->paired_with->tty->hw_stopped)) goto nullmodem_timer_tx_handle_error;
 
 	// Save the delta between requested and actual timer expiry
 	nm_device->delta_jiffies = (unsigned char) (jiffies - nm_device->tx_timer.expires);
@@ -337,6 +337,21 @@ static void nullmodem_timer_tx_handle(struct timer_list *tl)
 		tty_wakeup(nm_device->tty);
 
 	printd("%s - Transfered %u bytes\n", __FUNCTION__, tx_transfer_count);
+	return;
+
+nullmodem_timer_tx_handle_error:
+	// Can't transfer data, so reschedule transfer
+	spin_lock_irqsave(&nm_device->tx_spinlock, flags);
+	// Schedule Tx timer if Tx FIFO not empty
+	if (!kfifo_is_empty(&nm_device->tx_fifo)) {
+		if (!timer_pending(&nm_device->tx_timer)) {
+			nm_device->tx_timer.expires = jiffies + nm_device->ticks_per_tx_symbol;
+			add_timer(&nm_device->tx_timer);
+		}
+	}
+	spin_unlock_irqrestore(&nm_device->tx_spinlock, flags);
+
+	return;
 }
 
 static void nullmodem_timer_tx_set(struct timer_list *tl)
